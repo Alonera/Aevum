@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# Bundled binaries (large; fetch separately — see README "Build from source")
+bin/
+
+# Produced executables / installer (distributed via GitHub Releases, not committed)
+Portable/
+Setup/
+Aevum.exe
+Aevum-Setup.exe
+VideoIndirici.exe
+
+# Temp / preview
+_preview*.html
+_preview*.png
+_ffx/
+_fftest/
