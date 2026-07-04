@@ -11,6 +11,7 @@ yt-dlp'nin desteklediği ~1800 siteden video/ses indirir.
 
 import os
 import sys
+import json
 import threading
 import webbrowser
 import time
@@ -35,8 +36,8 @@ if sys.platform == "win32":
         from PIL import Image, ImageDraw
     except Exception:
         pystray = None
-        print("Uyari: tepsi (tray) kullanilamiyor — tarayici modunda calisiyor. "
-              "(kaynaktan calistiriyorsan: pip install pystray pillow flask)", flush=True)
+        print("Warning: system tray unavailable — running in browser mode. "
+              "(from source, run: pip install pystray pillow flask)", flush=True)
 else:
     pystray = None
 
@@ -52,9 +53,19 @@ jobs_lock = threading.Lock()
 
 PORT = 5000
 
-# Sayfadan gelen son istek zamanı — Linux'ta yaşam süresi buna bağlı
-_last_seen = time.time()
-_page_seen = False  # sayfa en az bir kez bağlandı mı?
+# ── Sayfa yaşam takibi (Linux'ta uygulama tarayıcı sekmesiyle yaşar) ─────────
+_last_seen = time.time()   # sayfadan gelen son istek zamanı
+_page_seen = False         # sayfa en az bir kez bağlandı mı?
+_clients = {}              # sekme kimliği -> son kalp atışı zamanı
+_clients_lock = threading.Lock()
+
+# Tarayıcılar arka plan sekmelerinde zamanlayıcıları kısar (Chrome: dakikada 1'e
+# kadar). Bu yüzden kalp atışı tek başına yeterli değil: temiz kapanışta sayfa
+# /bye gönderir (hızlı çıkış), kalp atışı ise uzun süreli yedek olarak kalır.
+_EXIT_GRACE = 15     # sn — son sekme kapandıktan sonra bekleme
+_FIRST_GRACE = 120   # sn — sayfa hiç bağlanmadıysa (tarayıcı yavaş açılabilir)
+_CLIENT_STALE = 90   # sn — bu kadar süre ping atmayan sekme ölü sayılır
+                     #      (arka plan kısıtlamasındaki sekme ~60 sn'de bir atar)
 
 
 @app.before_request
@@ -386,14 +397,14 @@ let jobId=null,pollTimer=null;
 const state={mode:'video',vq:'1080p',cont:'mp4',fmt:'mp3',br:'192k',cookies:'none',subs:false,mute:false,playlist:false};
 // ── çok dilli metinler (i18n) ──
 const I18N={
- en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download."},
- tr:{urlPlaceholder:"Video bağlantısını yapıştır — her site desteklenir",download:"İndir",mode:"Mod",video:"Video",audio:"Ses",quality:"Kalite",best:"En İyi",container:"Biçim",options:"Seçenek",subtitles:"Altyazı",mute:"Sessiz",format:"Format",bitrate:"Bit Hızı",source:"Kaynak",cookies:"Çerezler",none:"Yok",cookiesHint:"Giriş yapman gereken sitelerden (kendi hesabınla) indirmek için tarayıcının oturumunu kullanır. O tarayıcıyı önce kapat.",playlist:"Liste",downloadPlaylist:"Oynatma Listesini İndir",folder:"Klasör",history:"Geçmiş",stop:"Durdur",connecting:"bağlanıyor...",starting:"başlatılıyor...",downloading:"İndiriliyor",processing:"işleniyor...",completed:"tamamlandı ✓",stopping:"durduruluyor...",stopped:"durduruldu",errorGeneric:"hata oluştu — konsolu kontrol et",connError:"bağlantı hatası",mixWarn:"⚠ YouTube Mix (radyo) listesi sonsuzdur — ilk 50 video indirilecek.",mixInfo:"ℹ Bu bir Mix bağlantısı. Liste kapalı, yalnızca bu video inecek."},
- es:{urlPlaceholder:"Pega un enlace de vídeo — cualquier sitio funciona",download:"Descargar",mode:"Modo",video:"Vídeo",audio:"Audio",quality:"Calidad",best:"La mejor",container:"Formato",options:"Opciones",subtitles:"Subtítulos",mute:"Silenciar",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Ninguno",cookiesHint:"Usa la sesión de tu navegador para descargar de sitios donde debes iniciar sesión (tu propia cuenta). Cierra ese navegador primero.",playlist:"Lista",downloadPlaylist:"Descargar lista",folder:"Carpeta",history:"Historial",stop:"Detener",connecting:"conectando...",starting:"iniciando...",downloading:"Descargando",processing:"procesando...",completed:"completado ✓",stopping:"deteniendo...",stopped:"detenido",errorGeneric:"ocurrió un error — revisa la consola",connError:"error de conexión",mixWarn:"⚠ La Mix (radio) de YouTube es infinita — solo se descargarán los primeros 50 vídeos.",mixInfo:"ℹ Es un enlace Mix. La lista está desactivada, solo se descargará este vídeo."},
- de:{urlPlaceholder:"Video-Link einfügen — jede Seite funktioniert",download:"Herunterladen",mode:"Modus",video:"Video",audio:"Audio",quality:"Qualität",best:"Beste",container:"Format",options:"Optionen",subtitles:"Untertitel",mute:"Stumm",format:"Format",bitrate:"Bitrate",source:"Quelle",cookies:"Cookies",none:"Keine",cookiesHint:"Nutzt die Sitzung deines Browsers, um von Seiten herunterzuladen, bei denen du angemeldet sein musst (dein eigenes Konto). Schließe diesen Browser zuerst.",playlist:"Playlist",downloadPlaylist:"Playlist herunterladen",folder:"Ordner",history:"Verlauf",stop:"Stopp",connecting:"verbinde...",starting:"starte...",downloading:"Wird geladen",processing:"verarbeite...",completed:"fertig ✓",stopping:"stoppe...",stopped:"gestoppt",errorGeneric:"ein Fehler ist aufgetreten — Konsole prüfen",connError:"Verbindungsfehler",mixWarn:"⚠ YouTube-Mix (Radio) ist endlos — nur die ersten 50 Videos werden geladen.",mixInfo:"ℹ Dies ist ein Mix-Link. Playlist ist aus, nur dieses Video wird geladen."},
- fr:{urlPlaceholder:"Colle un lien vidéo — tous les sites marchent",download:"Télécharger",mode:"Mode",video:"Vidéo",audio:"Audio",quality:"Qualité",best:"Meilleure",container:"Format",options:"Options",subtitles:"Sous-titres",mute:"Muet",format:"Format",bitrate:"Débit",source:"Source",cookies:"Cookies",none:"Aucun",cookiesHint:"Utilise la session de ton navigateur pour télécharger depuis les sites où tu dois être connecté (ton propre compte). Ferme d'abord ce navigateur.",playlist:"Playlist",downloadPlaylist:"Télécharger la playlist",folder:"Dossier",history:"Historique",stop:"Arrêter",connecting:"connexion...",starting:"démarrage...",downloading:"Téléchargement",processing:"traitement...",completed:"terminé ✓",stopping:"arrêt...",stopped:"arrêté",errorGeneric:"une erreur s'est produite — vérifie la console",connError:"erreur de connexion",mixWarn:"⚠ Le Mix (radio) YouTube est infini — seules les 50 premières vidéos seront téléchargées.",mixInfo:"ℹ C'est un lien Mix. La playlist est désactivée, seule cette vidéo sera téléchargée."},
- it:{urlPlaceholder:"Incolla un link video — funziona con qualsiasi sito",download:"Scarica",mode:"Modalità",video:"Video",audio:"Audio",quality:"Qualità",best:"Migliore",container:"Formato",options:"Opzioni",subtitles:"Sottotitoli",mute:"Muto",format:"Formato",bitrate:"Bitrate",source:"Originale",cookies:"Cookie",none:"Nessuno",cookiesHint:"Usa la sessione del tuo browser per scaricare dai siti dove devi aver effettuato l'accesso (il tuo account). Chiudi prima quel browser.",playlist:"Playlist",downloadPlaylist:"Scarica playlist",folder:"Cartella",history:"Cronologia",stop:"Ferma",connecting:"connessione...",starting:"avvio...",downloading:"Scaricamento",processing:"elaborazione...",completed:"completato ✓",stopping:"arresto...",stopped:"fermato",errorGeneric:"si è verificato un errore — controlla la console",connError:"errore di connessione",mixWarn:"⚠ Il Mix (radio) di YouTube è infinito — verranno scaricati solo i primi 50 video.",mixInfo:"ℹ Questo è un link Mix. La playlist è disattivata, verrà scaricato solo questo video."},
- pt:{urlPlaceholder:"Cole um link de vídeo — qualquer site funciona",download:"Baixar",mode:"Modo",video:"Vídeo",audio:"Áudio",quality:"Qualidade",best:"Melhor",container:"Formato",options:"Opções",subtitles:"Legendas",mute:"Mudo",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Nenhum",cookiesHint:"Usa a sessão do seu navegador para baixar de sites onde você precisa estar logado (sua própria conta). Feche esse navegador primeiro.",playlist:"Playlist",downloadPlaylist:"Baixar playlist",folder:"Pasta",history:"Histórico",stop:"Parar",connecting:"conectando...",starting:"iniciando...",downloading:"Baixando",processing:"processando...",completed:"concluído ✓",stopping:"parando...",stopped:"parado",errorGeneric:"ocorreu um erro — verifique o console",connError:"erro de conexão",mixWarn:"⚠ O Mix (rádio) do YouTube é infinito — apenas os primeiros 50 vídeos serão baixados.",mixInfo:"ℹ Este é um link Mix. A playlist está desligada, apenas este vídeo será baixado."},
- ru:{urlPlaceholder:"Вставьте ссылку на видео — подходит любой сайт",download:"Скачать",mode:"Режим",video:"Видео",audio:"Аудио",quality:"Качество",best:"Лучшее",container:"Формат",options:"Опции",subtitles:"Субтитры",mute:"Без звука",format:"Формат",bitrate:"Битрейт",source:"Источник",cookies:"Cookies",none:"Нет",cookiesHint:"Использует сессию вашего браузера для загрузки с сайтов, где нужен вход (ваш аккаунт). Сначала закройте этот браузер.",playlist:"Плейлист",downloadPlaylist:"Скачать плейлист",folder:"Папка",history:"История",stop:"Стоп",connecting:"подключение...",starting:"запуск...",downloading:"Загрузка",processing:"обработка...",completed:"готово ✓",stopping:"остановка...",stopped:"остановлено",errorGeneric:"произошла ошибка — проверьте консоль",connError:"ошибка соединения",mixWarn:"⚠ YouTube Mix (радио) бесконечен — будут загружены только первые 50 видео.",mixInfo:"ℹ Это ссылка Mix. Плейлист выключен, будет загружено только это видео."}
+ en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download.",appClosed:"⚠ Aevum has quit — relaunch the app to continue."},
+ tr:{urlPlaceholder:"Video bağlantısını yapıştır — her site desteklenir",download:"İndir",mode:"Mod",video:"Video",audio:"Ses",quality:"Kalite",best:"En İyi",container:"Biçim",options:"Seçenek",subtitles:"Altyazı",mute:"Sessiz",format:"Format",bitrate:"Bit Hızı",source:"Kaynak",cookies:"Çerezler",none:"Yok",cookiesHint:"Giriş yapman gereken sitelerden (kendi hesabınla) indirmek için tarayıcının oturumunu kullanır. O tarayıcıyı önce kapat.",playlist:"Liste",downloadPlaylist:"Oynatma Listesini İndir",folder:"Klasör",history:"Geçmiş",stop:"Durdur",connecting:"bağlanıyor...",starting:"başlatılıyor...",downloading:"İndiriliyor",processing:"işleniyor...",completed:"tamamlandı ✓",stopping:"durduruluyor...",stopped:"durduruldu",errorGeneric:"hata oluştu — konsolu kontrol et",connError:"bağlantı hatası",mixWarn:"⚠ YouTube Mix (radyo) listesi sonsuzdur — ilk 50 video indirilecek.",mixInfo:"ℹ Bu bir Mix bağlantısı. Liste kapalı, yalnızca bu video inecek.",appClosed:"⚠ Aevum kapandı — devam etmek için uygulamayı yeniden başlat."},
+ es:{urlPlaceholder:"Pega un enlace de vídeo — cualquier sitio funciona",download:"Descargar",mode:"Modo",video:"Vídeo",audio:"Audio",quality:"Calidad",best:"La mejor",container:"Formato",options:"Opciones",subtitles:"Subtítulos",mute:"Silenciar",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Ninguno",cookiesHint:"Usa la sesión de tu navegador para descargar de sitios donde debes iniciar sesión (tu propia cuenta). Cierra ese navegador primero.",playlist:"Lista",downloadPlaylist:"Descargar lista",folder:"Carpeta",history:"Historial",stop:"Detener",connecting:"conectando...",starting:"iniciando...",downloading:"Descargando",processing:"procesando...",completed:"completado ✓",stopping:"deteniendo...",stopped:"detenido",errorGeneric:"ocurrió un error — revisa la consola",connError:"error de conexión",mixWarn:"⚠ La Mix (radio) de YouTube es infinita — solo se descargarán los primeros 50 vídeos.",mixInfo:"ℹ Es un enlace Mix. La lista está desactivada, solo se descargará este vídeo.",appClosed:"⚠ Aevum se ha cerrado — vuelve a abrir la aplicación para continuar."},
+ de:{urlPlaceholder:"Video-Link einfügen — jede Seite funktioniert",download:"Herunterladen",mode:"Modus",video:"Video",audio:"Audio",quality:"Qualität",best:"Beste",container:"Format",options:"Optionen",subtitles:"Untertitel",mute:"Stumm",format:"Format",bitrate:"Bitrate",source:"Quelle",cookies:"Cookies",none:"Keine",cookiesHint:"Nutzt die Sitzung deines Browsers, um von Seiten herunterzuladen, bei denen du angemeldet sein musst (dein eigenes Konto). Schließe diesen Browser zuerst.",playlist:"Playlist",downloadPlaylist:"Playlist herunterladen",folder:"Ordner",history:"Verlauf",stop:"Stopp",connecting:"verbinde...",starting:"starte...",downloading:"Wird geladen",processing:"verarbeite...",completed:"fertig ✓",stopping:"stoppe...",stopped:"gestoppt",errorGeneric:"ein Fehler ist aufgetreten — Konsole prüfen",connError:"Verbindungsfehler",mixWarn:"⚠ YouTube-Mix (Radio) ist endlos — nur die ersten 50 Videos werden geladen.",mixInfo:"ℹ Dies ist ein Mix-Link. Playlist ist aus, nur dieses Video wird geladen.",appClosed:"⚠ Aevum wurde beendet — starte die App neu, um fortzufahren."},
+ fr:{urlPlaceholder:"Colle un lien vidéo — tous les sites marchent",download:"Télécharger",mode:"Mode",video:"Vidéo",audio:"Audio",quality:"Qualité",best:"Meilleure",container:"Format",options:"Options",subtitles:"Sous-titres",mute:"Muet",format:"Format",bitrate:"Débit",source:"Source",cookies:"Cookies",none:"Aucun",cookiesHint:"Utilise la session de ton navigateur pour télécharger depuis les sites où tu dois être connecté (ton propre compte). Ferme d'abord ce navigateur.",playlist:"Playlist",downloadPlaylist:"Télécharger la playlist",folder:"Dossier",history:"Historique",stop:"Arrêter",connecting:"connexion...",starting:"démarrage...",downloading:"Téléchargement",processing:"traitement...",completed:"terminé ✓",stopping:"arrêt...",stopped:"arrêté",errorGeneric:"une erreur s'est produite — vérifie la console",connError:"erreur de connexion",mixWarn:"⚠ Le Mix (radio) YouTube est infini — seules les 50 premières vidéos seront téléchargées.",mixInfo:"ℹ C'est un lien Mix. La playlist est désactivée, seule cette vidéo sera téléchargée.",appClosed:"⚠ Aevum s'est fermé — relance l'application pour continuer."},
+ it:{urlPlaceholder:"Incolla un link video — funziona con qualsiasi sito",download:"Scarica",mode:"Modalità",video:"Video",audio:"Audio",quality:"Qualità",best:"Migliore",container:"Formato",options:"Opzioni",subtitles:"Sottotitoli",mute:"Muto",format:"Formato",bitrate:"Bitrate",source:"Originale",cookies:"Cookie",none:"Nessuno",cookiesHint:"Usa la sessione del tuo browser per scaricare dai siti dove devi aver effettuato l'accesso (il tuo account). Chiudi prima quel browser.",playlist:"Playlist",downloadPlaylist:"Scarica playlist",folder:"Cartella",history:"Cronologia",stop:"Ferma",connecting:"connessione...",starting:"avvio...",downloading:"Scaricamento",processing:"elaborazione...",completed:"completato ✓",stopping:"arresto...",stopped:"fermato",errorGeneric:"si è verificato un errore — controlla la console",connError:"errore di connessione",mixWarn:"⚠ Il Mix (radio) di YouTube è infinito — verranno scaricati solo i primi 50 video.",mixInfo:"ℹ Questo è un link Mix. La playlist è disattivata, verrà scaricato solo questo video.",appClosed:"⚠ Aevum si è chiuso — riavvia l'applicazione per continuare."},
+ pt:{urlPlaceholder:"Cole um link de vídeo — qualquer site funciona",download:"Baixar",mode:"Modo",video:"Vídeo",audio:"Áudio",quality:"Qualidade",best:"Melhor",container:"Formato",options:"Opções",subtitles:"Legendas",mute:"Mudo",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Nenhum",cookiesHint:"Usa a sessão do seu navegador para baixar de sites onde você precisa estar logado (sua própria conta). Feche esse navegador primeiro.",playlist:"Playlist",downloadPlaylist:"Baixar playlist",folder:"Pasta",history:"Histórico",stop:"Parar",connecting:"conectando...",starting:"iniciando...",downloading:"Baixando",processing:"processando...",completed:"concluído ✓",stopping:"parando...",stopped:"parado",errorGeneric:"ocorreu um erro — verifique o console",connError:"erro de conexão",mixWarn:"⚠ O Mix (rádio) do YouTube é infinito — apenas os primeiros 50 vídeos serão baixados.",mixInfo:"ℹ Este é um link Mix. A playlist está desligada, apenas este vídeo será baixado.",appClosed:"⚠ O Aevum foi encerrado — reabra o aplicativo para continuar."},
+ ru:{urlPlaceholder:"Вставьте ссылку на видео — подходит любой сайт",download:"Скачать",mode:"Режим",video:"Видео",audio:"Аудио",quality:"Качество",best:"Лучшее",container:"Формат",options:"Опции",subtitles:"Субтитры",mute:"Без звука",format:"Формат",bitrate:"Битрейт",source:"Источник",cookies:"Cookies",none:"Нет",cookiesHint:"Использует сессию вашего браузера для загрузки с сайтов, где нужен вход (ваш аккаунт). Сначала закройте этот браузер.",playlist:"Плейлист",downloadPlaylist:"Скачать плейлист",folder:"Папка",history:"История",stop:"Стоп",connecting:"подключение...",starting:"запуск...",downloading:"Загрузка",processing:"обработка...",completed:"готово ✓",stopping:"остановка...",stopped:"остановлено",errorGeneric:"произошла ошибка — проверьте консоль",connError:"ошибка соединения",mixWarn:"⚠ YouTube Mix (радио) бесконечен — будут загружены только первые 50 видео.",mixInfo:"ℹ Это ссылка Mix. Плейлист выключен, будет загружено только это видео.",appClosed:"⚠ Aevum завершил работу — перезапустите приложение, чтобы продолжить."}
 };
 const LANGS=[['en','English'],['tr','Türkçe'],['es','Español'],['de','Deutsch'],['fr','Français'],['it','Italiano'],['pt','Português'],['ru','Русский']];
 const langMenu=document.getElementById('langMenu'),langCode=document.getElementById('langCode'),langbox=document.getElementById('langbox');
@@ -402,7 +413,7 @@ function T(k){const L=I18N[curLang]||I18N.en;return L[k]!==undefined?L[k]:(I18N.
 function renderTexts(){document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=T(el.dataset.i18n);});document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.placeholder=T(el.dataset.i18nPh);});}
 function buildLangMenu(){langMenu.innerHTML=LANGS.map(([c,n])=>'<button class="lang-opt'+(c===curLang?' active':'')+'" data-lang="'+c+'" onclick="selectLang(\\''+c+'\\')"><span>'+n+'</span><span class="lc">'+c.toUpperCase()+'</span></button>').join('');}
 function applyLang(l){curLang=l;localStorage.setItem('vdl_lang',l);document.documentElement.lang=l;langCode.textContent=l.toUpperCase();renderTexts();updateNote();buildLangMenu();buildThemeMenu();renderSettings();}
-function selectLang(l){applyLang(l);closeLangMenu();}
+function selectLang(l){applyLang(l);saveCfg({lang:l});closeLangMenu();}
 function toggleLangMenu(e){e.stopPropagation();langMenu.classList.toggle('open');}
 function closeLangMenu(){langMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(langbox&&!langbox.contains(e.target))closeLangMenu();});
@@ -420,7 +431,7 @@ function setAccent(rgb){accentRGB=rgb;const ds=document.documentElement.style;ds
 function hslToRgb(h,s,l){let r,g,b;if(s===0){r=g=b=l;}else{const f=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;r=f(p,q,h+1/3);g=f(p,q,h);b=f(p,q,h-1/3);}return Math.round(r*255)+','+Math.round(g*255)+','+Math.round(b*255);}
 function applyTheme(t){if(!THEME_LIST.some(x=>x[0]===t))t='green';curTheme=t;localStorage.setItem('aevum_theme',t);dynamicActive=(t==='dynamic');if(!dynamicActive){setAccent(THEME_LIST.find(x=>x[0]===t)[1]);}buildThemeMenu();}
 function buildThemeMenu(){themeMenu.innerHTML=THEME_LIST.map(([id,rgb])=>{const dot=rgb?('background:rgb('+rgb+')'):('background:conic-gradient(from 0deg,#ff5b5b,#ffd93b,#4be08a,#4aa3ff,#a77bff,#ff5b5b)');return '<button class="theme-opt'+(id===curTheme?' active':'')+'" onclick="selectTheme(\\''+id+'\\')"><span class="dot" style="'+dot+'"></span><span class="nm">'+TT(id)+'</span></button>';}).join('');}
-function selectTheme(t){applyTheme(t);closeThemeMenu();}
+function selectTheme(t){applyTheme(t);saveCfg({theme:t});closeThemeMenu();}
 function toggleThemeMenu(e){e.stopPropagation();themeMenu.classList.toggle('open');}
 function closeThemeMenu(){themeMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(themebox&&!themebox.contains(e.target))closeThemeMenu();});
@@ -442,7 +453,8 @@ function renderSettings(){settingsTitle.textContent=TS('settings');settingsStart
 function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');}
 function closeSettings(){settingsPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(settingsbox&&!settingsbox.contains(e.target))closeSettings();});
-function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';}).catch(()=>{});}
+function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).catch(()=>{});}
+function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';if(s.lang&&I18N[s.lang]&&s.lang!==curLang)applyLang(s.lang);if(s.theme&&THEME_LIST.some(x=>x[0]===s.theme)&&s.theme!==curTheme)applyTheme(s.theme);}).catch(()=>{});}
 function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startup:on})}).catch(()=>{});}
 function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
 // ── tüm pencereyi kaplayan etkileşimli parçacık ağı ──
@@ -508,8 +520,13 @@ applyTheme(curTheme);
 applyLang(curLang);
 loadSettings();
 loadHistory();
-// kalp atışı: Linux'ta sekme kapanınca uygulamanın kendini kapatmasını sağlar
-setInterval(()=>{fetch('/ping',{cache:'no-store'}).catch(()=>{});},3000);
+// ── yaşam sinyali: Linux'ta sekme kapanınca uygulama kendini kapatır ──
+const CID=Math.random().toString(36).slice(2)+Date.now().toString(36);
+let pingFails=0;
+function showDead(){if(document.getElementById('deadbar'))return;const b=document.createElement('div');b.id='deadbar';b.textContent=T('appClosed');b.style.cssText='position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99;background:rgba(40,12,10,0.95);border:1px solid rgba(255,100,80,0.45);color:rgba(255,150,130,0.95);font-family:inherit;font-size:11px;padding:9px 16px;border-radius:9px;box-shadow:0 10px 30px -8px rgba(0,0,0,0.8)';document.body.appendChild(b);}
+setInterval(()=>{fetch('/ping?id='+CID,{cache:'no-store'}).then(()=>{pingFails=0;const b=document.getElementById('deadbar');if(b)b.remove();}).catch(()=>{if(++pingFails>=4)showDead();});},3000);
+// sekme kapanırken haber ver (hızlı, temiz çıkış; yenilemede yeni sayfa hemen geri bağlanır)
+window.addEventListener('pagehide',()=>{try{navigator.sendBeacon('/bye?id='+CID);}catch(e){}});
 // ilk açılışta ayarları göster (bir kez)
 if(!localStorage.getItem('aevum_onboarded')){setTimeout(()=>settingsPanel.classList.add('open'),700);localStorage.setItem('aevum_onboarded','1');}
 </script>
@@ -570,7 +587,7 @@ def build_cmd(data: dict, output_dir: str) -> list:
     if is_playlist:
         # Liste adında bir alt klasör oluştur, içine sıralı numarayla indir
         out = os.path.join(output_dir,
-                           "%(playlist_title|Oynatma Listesi)s",
+                           "%(playlist_title|Playlist)s",
                            "%(autonumber)03d - %(title).150B [%(id)s].%(ext)s")
     else:
         out = os.path.join(output_dir, "%(title).180B [%(id)s].%(ext)s")
@@ -628,9 +645,9 @@ def history_meta(data: dict) -> str:
     if data.get("mode") == "video":
         parts = [data.get("vq", ""), data.get("cont", "")]
         if data.get("mute"):
-            parts.append("sessiz")
+            parts.append("muted")
         if data.get("subs"):
-            parts.append("altyazı")
+            parts.append("subs")
         return " ".join(p for p in parts if p)
     return f"{data.get('fmt','')} {data.get('br','')}".strip()
 
@@ -693,7 +710,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
     except FileNotFoundError:
         with jobs_lock:
             jobs[job_id].update({"done": True, "success": False, "code": "error",
-                                 "error_line": "yt-dlp not found — run KURULUM.bat"})
+                                 "error_line": "yt-dlp not found — reinstall Aevum"})
     except Exception as e:
         with jobs_lock:
             jobs[job_id].update({"done": True, "success": False, "code": "error",
@@ -727,7 +744,7 @@ def download_route():
     data = request.json or {}
     url  = data.get("url", "").strip()
     if not url:
-        return jsonify({"error": "URL boş"}), 400
+        return jsonify({"error": "empty URL"}), 400
     raw_dir    = data.get("dir", "").strip()
     output_dir = str(Path(raw_dir).expanduser()) if raw_dir else _default_download_dir()
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -745,7 +762,7 @@ def status_route(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
         if not job:
-            return jsonify({"error": "bulunamadı"}), 404
+            return jsonify({"error": "not found"}), 404
         idx = job["read_idx"]
         new_lines = job["lines"][idx:]
         job["read_idx"] = len(job["lines"])
@@ -760,7 +777,7 @@ def cancel_route(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
         if not job:
-            return jsonify({"error": "bulunamadı"}), 404
+            return jsonify({"error": "not found"}), 404
         job["cancelled"] = True
         proc = job.get("proc")
     if proc and proc.poll() is None:
@@ -782,8 +799,58 @@ def fonts_route(name):
 
 @app.route("/ping")
 def ping_route():
-    # Sayfanın kalp atışı; before_request _last_seen'i günceller
+    # Sayfanın kalp atışı; before_request _last_seen'i de günceller
+    cid = request.args.get("id")
+    if cid:
+        with _clients_lock:
+            _clients[cid] = time.time()
     return jsonify({"ok": True})
+
+
+@app.route("/bye", methods=["POST", "GET"])
+def bye_route():
+    # Sekme kapanırken sendBeacon ile gelir → hızlı ve temiz çıkış sağlar.
+    # Sayfa yenilemede de tetiklenir ama yeni sayfa hemen yeniden ping atar;
+    # watchdog _EXIT_GRACE beklediği için yenileme uygulamayı kapatmaz.
+    cid = request.args.get("id")
+    if cid:
+        with _clients_lock:
+            _clients.pop(cid, None)
+    return jsonify({"ok": True})
+
+
+# ── Kalıcı ayarlar (dil, tema): sunucu tarafında config.json ────────────────
+# localStorage porta bağlıdır: 5000 doluyken 5001'e düşülürse tarayıcı bunu
+# ayrı site sayar ve seçimler kaybolur. Bu yüzden dil/tema sunucuda saklanır.
+
+_cfg_lock = threading.Lock()
+
+
+def _config_file() -> str:
+    if _IS_WINDOWS:
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "Aevum", "config.json")
+    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(cfg, "aevum", "config.json")
+
+
+def _load_config() -> dict:
+    try:
+        with open(_config_file(), encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_config(updates: dict):
+    with _cfg_lock:
+        cfg = _load_config()
+        cfg.update(updates)
+        path = _config_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
 
 
 # ── Ayarlar: başlangıçta otomatik açılma (Windows: registry, Linux: autostart) ──
@@ -972,12 +1039,15 @@ def uninstall_menu_entry() -> None:
 
 @app.route("/settings")
 def settings_get():
+    cfg = _load_config()
     return jsonify({
         "startup": get_startup_enabled(),
         "menu": get_menu_installed(),
         "canMenu": sys.platform.startswith("linux"),
         # Başlangıçta açılma tepsiye oturmayı gerektirir → yalnızca Windows
         "canStartup": _IS_WINDOWS,
+        "lang": cfg.get("lang", ""),
+        "theme": cfg.get("theme", ""),
     })
 
 
@@ -997,6 +1067,17 @@ def settings_set():
             set_startup_enabled(bool(data["startup"]))
         except OSError as e:
             return jsonify({"ok": False, "error": str(e)}), 500
+    # Dil/tema tercihi: porttan bağımsız kalıcılık için sunucuda sakla
+    updates = {}
+    if isinstance(data.get("lang"), str) and data["lang"]:
+        updates["lang"] = data["lang"][:8]
+    if isinstance(data.get("theme"), str) and data["theme"]:
+        updates["theme"] = data["theme"][:16]
+    if updates:
+        try:
+            _save_config(updates)
+        except OSError:
+            pass  # config yazılamasa da uygulama çalışmaya devam etsin
     return jsonify({"ok": True, "startup": get_startup_enabled(),
                     "menu": get_menu_installed()})
 
@@ -1082,12 +1163,13 @@ def _shutdown_now():
 
 
 def _browser_watchdog():
-    """Linux (tepsisiz mod): sayfadan kalp atışı kesilince uygulamayı kapat.
+    """Linux (tepsisiz mod): son sekme kapanınca uygulamayı kapat.
 
-    Sayfa her 3 sn'de /ping atar. Sekme kapanınca istekler durur; kısa bir
-    bekleme sonrası (sayfa yenileme/geçici kopmaları tolere eder) çıkılır.
+    Sekmeler her 3 sn'de /ping atar ve kapanırken /bye gönderir. Kapanış
+    tespiti: canlı sekme kalmadıysa ve son istekten _EXIT_GRACE geçtiyse çık.
+    /bye kaybolursa (çökme, elektrik) sekme _CLIENT_STALE sonrası ölü sayılır.
     Aktif bir indirme sürerken asla çıkılmaz — indirme biter, sayfa hâlâ
-    kapalıysa o zaman kapanır.
+    kapalıysa o zaman kapanılır.
     """
     while True:
         time.sleep(3)
@@ -1095,10 +1177,18 @@ def _browser_watchdog():
             active = any(not j["done"] for j in jobs.values())
         if active:
             continue
+        now = time.time()
+        with _clients_lock:
+            for cid, ts in list(_clients.items()):
+                if now - ts > _CLIENT_STALE:
+                    del _clients[cid]
+            alive = bool(_clients)
+        if alive:
+            continue
         # Sayfa hiç bağlanmadıysa (tarayıcı yavaş açılıyor olabilir) uzun bekle
-        grace = 15 if _page_seen else 120
-        if time.time() - _last_seen > grace:
-            print("Tarayici kapandi — Aevum kapaniyor.", flush=True)
+        grace = _EXIT_GRACE if _page_seen else _FIRST_GRACE
+        if now - _last_seen > grace:
+            print("Browser tab closed — shutting down Aevum.", flush=True)
             _shutdown_now()
 
 
@@ -1111,7 +1201,7 @@ def main():
     time.sleep(1.2)
 
     url = f"http://localhost:{PORT}"
-    print(f"AEVUM calisiyor -> {url}", flush=True)
+    print(f"Aevum is running -> {url}", flush=True)
 
     # ── Linux: tepsisiz mod — tarayıcı açılır, sekme kapanınca uygulama kapanır ──
     if not _IS_WINDOWS:
@@ -1122,8 +1212,8 @@ def main():
             pass
         # Menüye kurulu değilse yol göster (AppImage)
         if os.environ.get("APPIMAGE") and not get_menu_installed():
-            print("Ipucu: uygulama menusune kurmak icin arayuzde Ayarlar > "
-                  "'Uygulama menusune kur' ac, ya da calistir: "
+            print("Tip: to install Aevum into your app menu, open Settings > "
+                  "'Add to app menu' on the page, or run: "
                   f"\"{os.environ['APPIMAGE']}\" --install", flush=True)
         _open_url(url)
         threading.Thread(target=_browser_watchdog, daemon=True).start()
@@ -1153,8 +1243,8 @@ def main():
             return
         except Exception as e:
             # Tepsi başlatılamadı — çökme, sunucuyu ayakta tut.
-            print(f"Tepsi ikonu yok ({e.__class__.__name__}); tarayicidan kullan, "
-                  f"kapatmak icin Ctrl+C.", flush=True)
+            print(f"No tray icon ({e.__class__.__name__}); use the browser page, "
+                  f"press Ctrl+C to quit.", flush=True)
 
     # Tepsisiz mod: sunucuyu ayakta tut ki indirmeler yine çalışsın.
     if tray_only:
@@ -1169,12 +1259,11 @@ def main():
 if __name__ == "__main__":
     if sys.platform.startswith("linux") and "--uninstall" in sys.argv:
         uninstall_menu_entry()
-        print("Aevum uygulama menusunden kaldirildi. (Removed from the app menu.)",
-              flush=True)
+        print("Aevum removed from the app menu.", flush=True)
         sys.exit(0)
     if sys.platform.startswith("linux") and "--install" in sys.argv:
         install_menu_entry()
-        print("Aevum uygulama menusune kuruldu — artik menuden baslatabilirsin. "
-              "(Installed to the app menu.)", flush=True)
+        print("Aevum installed to the app menu — you can now launch it from there.",
+              flush=True)
         sys.exit(0)
     main()
