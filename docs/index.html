@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aevum — Download video &amp; audio from any site</title>
+<meta name="description" content="Free, open-source, ad-free desktop app to download video and audio from any site (~1,800 supported). Powered by yt-dlp and FFmpeg. No ads, no tracking, self-contained.">
+<meta property="og:title" content="Aevum — free, ad-free video &amp; audio downloader">
+<meta property="og:description" content="Download video and audio from any site. Free, open source, no ads, no tracking.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0a0e'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2300e6a0' stroke-width='2'/%3E%3Ccircle cx='23' cy='9' r='3.2' fill='%23e6fff5'/%3E%3Ccircle cx='16' cy='16' r='1.3' fill='%2300e6a0'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--acc:0,230,160}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#08080b;color:#e9edf0;font-family:'JetBrains Mono',monospace;min-height:100vh;overflow-x:hidden;position:relative}
+body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;background:radial-gradient(38% 38% at 18% 18%,rgba(80,220,120,.10),transparent 60%),radial-gradient(34% 34% at 84% 26%,rgba(0,230,160,.11),transparent 60%),radial-gradient(44% 44% at 60% 92%,rgba(60,150,255,.09),transparent 60%);filter:blur(36px);animation:aur 22s ease-in-out infinite alternate}
+@keyframes aur{0%{transform:translate(-2%,-2%) scale(1)}100%{transform:translate(2%,3%) scale(1.07)}}
+#bg{position:fixed;inset:0;z-index:0;pointer-events:none}
+main{position:relative;z-index:1;max-width:860px;margin:0 auto;padding:64px 22px 40px;text-align:center}
+.logo{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:34px;letter-spacing:6px;font-size:13px;color:rgba(255,255,255,.55);font-weight:500}
+.logo svg{filter:drop-shadow(0 0 8px rgba(var(--acc),.5))}
+h1{font-size:clamp(30px,6vw,52px);font-weight:600;line-height:1.15;letter-spacing:-.5px}
+h1 span{color:rgb(var(--acc))}
+.tag{margin:20px auto 0;max-width:560px;color:rgba(255,255,255,.55);font-size:14px;line-height:1.7}
+.cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:38px 0 10px}
+.btn{display:inline-flex;align-items:center;gap:9px;text-decoration:none;font-family:inherit;font-size:14px;font-weight:500;padding:14px 26px;border-radius:11px;transition:transform .15s,box-shadow .25s,background .25s,border-color .25s}
+.btn.primary{background:rgb(var(--acc));color:#06120d;box-shadow:0 8px 30px -8px rgba(var(--acc),.5)}
+.btn.primary:hover{transform:translateY(-2px);box-shadow:0 14px 40px -8px rgba(var(--acc),.6)}
+.btn.ghost{background:rgba(255,255,255,.04);color:#e9edf0;border:1px solid rgba(255,255,255,.14)}
+.btn.ghost:hover{border-color:rgba(var(--acc),.5);color:rgb(var(--acc))}
+.sub{margin-top:12px;font-size:11px;color:rgba(255,255,255,.32)}
+.shot{margin:50px auto 0;max-width:640px;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.08);box-shadow:0 30px 80px -30px rgba(0,0,0,.9)}
+.shot img{display:block;width:100%;height:auto}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:52px 0 0;text-align:left}
+.card{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:18px 18px}
+.card b{display:block;color:#fff;font-size:13px;margin-bottom:6px}
+.card b::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:rgb(var(--acc));margin-right:8px;vertical-align:middle;box-shadow:0 0 8px rgba(var(--acc),.7)}
+.card span{color:rgba(255,255,255,.5);font-size:12px;line-height:1.6}
+.note{margin:44px auto 0;max-width:560px;color:rgba(255,255,255,.4);font-size:12px;line-height:1.7}
+footer{margin-top:40px;padding-top:22px;border-top:1px solid rgba(255,255,255,.06);color:rgba(255,255,255,.32);font-size:11px;letter-spacing:.5px}
+footer a{color:rgba(255,255,255,.5);text-decoration:none}
+footer a:hover{color:rgb(var(--acc))}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<main>
+  <div class="logo">
+    <svg width="24" height="24" viewBox="0 0 32 32"><circle cx="16" cy="16" r="9" fill="none" stroke="#00e6a0" stroke-width="2"/><circle cx="23" cy="9" r="3.2" fill="#e6fff5"/><circle cx="16" cy="16" r="1.3" fill="#00e6a0"/></svg>
+    AEVUM
+  </div>
+  <h1>Download video &amp; audio<br>from <span>any site</span></h1>
+  <p class="tag">A free, open-source, <b>ad-free</b> desktop app. Grabs video and audio from ~1,800 sites — powered by yt-dlp &amp; FFmpeg. No installation prerequisites, no tracking, everything runs locally.</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/Alonera/Aevum/releases/latest">↓ Download for Windows</a>
+    <a class="btn ghost" href="https://github.com/Alonera/Aevum">View on GitHub</a>
+  </div>
+  <div class="sub">Free · Windows · ~75 MB · no account needed</div>
+
+  <div class="shot"><img src="screenshot.png" alt="Aevum app screenshot" loading="lazy"></div>
+
+  <div class="features">
+    <div class="card"><b>Any site</b><span>YouTube, Vimeo, Twitch and ~1,800 more via yt-dlp.</span></div>
+    <div class="card"><b>No ads, no tracking</b><span>No adware, no bundled toolbars, no telemetry.</span></div>
+    <div class="card"><b>Video or audio</b><span>Up to 4K (MP4/MKV) or MP3/M4A/Opus/FLAC/WAV.</span></div>
+    <div class="card"><b>Subtitles &amp; playlists</b><span>Embed subtitles, download whole playlists into a folder.</span></div>
+    <div class="card"><b>8 languages · themes</b><span>English, Türkçe, Español, Deutsch and more.</span></div>
+    <div class="card"><b>Self-contained</b><span>yt-dlp and FFmpeg bundled — nothing else to install.</span></div>
+  </div>
+
+  <p class="note">Vibe-coded with a little help from AI, and shared freely. Only download content you have the right to save.</p>
+
+  <footer>Built with Python · yt-dlp · FFmpeg &nbsp;·&nbsp; MIT License &nbsp;·&nbsp; <a href="https://github.com/Alonera/Aevum">github.com/Alonera/Aevum</a></footer>
+</main>
+<script>
+const cv=document.getElementById('bg'),cx=cv.getContext('2d');
+let W,H,ps=[];const m={x:-999,y:-999};
+function rs(){W=cv.width=innerWidth;H=cv.height=innerHeight;}
+function init(){ps=[];const n=Math.max(30,Math.min(70,Math.floor(W*H/22000)));for(let i=0;i<n;i++)ps.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.18,vy:(Math.random()-.5)*.18});}
+let last=performance.now();
+function frame(now){requestAnimationFrame(frame);if(document.hidden)return;let dt=(now-last)/16.667;last=now;if(dt>3)dt=3;cx.clearRect(0,0,W,H);
+for(let i=0;i<ps.length;i++){const p=ps[i];p.x+=p.vx*dt;p.y+=p.vy*dt;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1;
+for(let j=i+1;j<ps.length;j++){const q=ps[j],dx=p.x-q.x,dy=p.y-q.y,d2=dx*dx+dy*dy;if(d2<13000){cx.strokeStyle='rgba(0,230,160,'+(1-Math.sqrt(d2)/114)*.13+')';cx.beginPath();cx.moveTo(p.x,p.y);cx.lineTo(q.x,q.y);cx.stroke();}}}
+for(const p of ps){cx.fillStyle='rgba(0,230,160,.45)';cx.beginPath();cx.arc(p.x,p.y,1.4,0,6.28);cx.fill();}}
+rs();init();requestAnimationFrame(frame);
+addEventListener('resize',()=>{rs();init();});
+</script>
+</body>
+</html>
