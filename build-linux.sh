@@ -17,8 +17,8 @@ pyinstaller --noconfirm --clean --name Aevum \
   --add-data "bin/yt-dlp:." \
   --add-data "bin/ffmpeg:." \
   --add-data "fonts:fonts" \
-  --hidden-import "pystray._appindicator" \
   --hidden-import "pystray._xorg" \
+  --collect-submodules "Xlib" \
   ytdl_tray.py
 
 echo "[2/4] AppDir..."
