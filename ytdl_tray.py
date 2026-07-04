@@ -24,18 +24,15 @@ except ImportError:
     winreg = None
 
 # ── Tray için gerekli import ─────────────────────────────────────────────────
+# pystray backend seçimini import sırasında yapar; Linux'ta uygun backend yoksa
+# (ör. Wayland, DISPLAY yok) burada patlayabilir → tepsisiz devam et, çökme.
 try:
     import pystray
     from PIL import Image, ImageDraw
-except ImportError:
-    import tkinter as tk
-    from tkinter import messagebox
-    root = tk.Tk(); root.withdraw()
-    messagebox.showerror(
-        "Eksik Paket",
-        "Lütfen terminalde şunu çalıştır:\n\npip install pystray pillow flask"
-    )
-    sys.exit(1)
+except Exception:
+    pystray = None
+    print("Uyari: tepsi (tray) kullanilamiyor — tarayici modunda calisiyor. "
+          "(kaynaktan calistiriyorsan: pip install pystray pillow flask)", flush=True)
 
 from flask import Flask, request, jsonify, render_template_string, send_from_directory
 import uuid
@@ -71,6 +68,24 @@ def _find_binary(name: str) -> str:
                     pass
             return cand
     return shutil.which(name) or fname
+
+
+def _clean_env() -> dict:
+    """Alt süreçler için temiz ortam.
+
+    PyInstaller, Linux'ta LD_LIBRARY_PATH'i kendi bundle klasörüne çevirir ve bu
+    tüm alt süreçlere miras kalır: xdg-open ile açılan tarayıcı bizim glib/gio
+    kopyalarımızı yükleyip sessizce çöker, yt-dlp/ffmpeg de etkilenebilir.
+    Bootloader orijinali LD_LIBRARY_PATH_ORIG'de saklar — onu geri koy.
+    """
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False) and sys.platform not in ("win32", "darwin"):
+        orig = env.get("LD_LIBRARY_PATH_ORIG")
+        if orig:
+            env["LD_LIBRARY_PATH"] = orig
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+    return env
 
 
 # Gömülü (bundled) yt-dlp + ffmpeg; hiçbir kurulum gerektirmeden çalışır
@@ -601,6 +616,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                env=_clean_env(),
                                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
         with jobs_lock:
             jobs[job_id]["proc"] = proc
@@ -843,8 +859,23 @@ def create_icon_image():
     return img
 
 
+def _open_url(url: str):
+    """Tarayıcıyı temiz ortamla aç (webbrowser modülü kirli LD_LIBRARY_PATH geçirir)."""
+    if sys.platform.startswith("linux"):
+        opener = shutil.which("xdg-open")
+        if opener:
+            try:
+                subprocess.Popen([opener, url], env=_clean_env(),
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+                return
+            except OSError:
+                pass
+    webbrowser.open(url)
+
+
 def open_browser(icon=None, item=None):
-    webbrowser.open(f"http://localhost:{PORT}")
+    _open_url(f"http://localhost:{PORT}")
 
 
 def quit_app(icon, item):
@@ -884,30 +915,38 @@ def main():
     flask_thread.start()
     time.sleep(1.2)
 
-    # --startup ile başlatıldıysa (Windows açılışı) sayfayı açma, sadece tepside dur
+    url = f"http://localhost:{PORT}"
+    print(f"AEVUM calisiyor -> {url}", flush=True)
+
+    # --startup ile başlatıldıysa (açılışta otomatik) sayfayı açma, sadece tepside dur
     tray_only = "--startup" in sys.argv or "--tray" in sys.argv
     if not tray_only:
-        webbrowser.open(f"http://localhost:{PORT}")
+        _open_url(url)
 
-    icon_image = create_icon_image()
-    menu = pystray.Menu(
-        pystray.MenuItem("Open Aevum", open_browser, default=True),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Quit Aevum", quit_app),
-    )
-    try:
-        icon = pystray.Icon("aevum", icon_image, "Aevum", menu)
-        icon.run()
-    except Exception:
-        # Tepsi başlatılamadı (ör. Linux'ta uygun tray backend'i yok) — çökme;
-        # sunucuyu ayakta tut, gerekirse sayfayı aç ki indirmeler yine çalışsın.
-        if tray_only:
-            webbrowser.open(f"http://localhost:{PORT}")
+    if pystray is not None:
         try:
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            os._exit(0)
+            icon_image = create_icon_image()
+            menu = pystray.Menu(
+                pystray.MenuItem("Open Aevum", open_browser, default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Quit Aevum", quit_app),
+            )
+            icon = pystray.Icon("aevum", icon_image, "Aevum", menu)
+            icon.run()
+            return
+        except Exception as e:
+            # Tepsi başlatılamadı (ör. Wayland / panelde XEmbed yok) — çökme.
+            print(f"Tepsi ikonu yok ({e.__class__.__name__}); tarayicidan kullan, "
+                  f"kapatmak icin Ctrl+C.", flush=True)
+
+    # Tepsisiz mod: sunucuyu ayakta tut ki indirmeler yine çalışsın.
+    if tray_only:
+        _open_url(url)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        os._exit(0)
 
 
 if __name__ == "__main__":
