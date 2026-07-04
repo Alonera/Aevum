@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Build Aevum for Linux: PyInstaller -> AppDir -> AppImage + tar.gz
 #
-# Requires: python3 with  flask pystray pillow pyinstaller pycairo PyGObject
+# Requires: python3 with  flask pyinstaller
 #           plus  bin/yt-dlp  and  bin/ffmpeg  (Linux binaries), and internet
 #           (to download appimagetool). The GitHub Actions workflow sets all this up.
+# No tray on Linux (pystray/PIL excluded): the app lives and dies with the
+# browser tab instead.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -18,8 +20,9 @@ pyinstaller --noconfirm --clean --name Aevum \
   --add-data "bin/ffmpeg:." \
   --add-data "aevum.png:." \
   --add-data "fonts:fonts" \
-  --hidden-import "pystray._xorg" \
-  --collect-submodules "Xlib" \
+  --exclude-module "pystray" \
+  --exclude-module "PIL" \
+  --exclude-module "Xlib" \
   ytdl_tray.py
 
 echo "[2/4] AppDir..."
