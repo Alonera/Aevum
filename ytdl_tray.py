@@ -657,6 +657,23 @@ def index():
     return render_template_string(HTML)
 
 
+_IS_WINDOWS = sys.platform == "win32"
+
+
+def _default_download_dir() -> str:
+    # Linux/macOS: XDG "İndirilenler" klasörünü kullan (yoksa ~/Downloads)
+    if not _IS_WINDOWS:
+        try:
+            out = subprocess.run(["xdg-user-dir", "DOWNLOAD"],
+                                 capture_output=True, text=True, timeout=3)
+            d = out.stdout.strip()
+            if d and os.path.isdir(d):
+                return d
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            pass
+    return str(Path.home() / "Downloads")
+
+
 @app.route("/download", methods=["POST"])
 def download_route():
     data = request.json or {}
@@ -664,7 +681,7 @@ def download_route():
     if not url:
         return jsonify({"error": "URL boş"}), 400
     raw_dir    = data.get("dir", "").strip()
-    output_dir = str(Path(raw_dir).expanduser()) if raw_dir else str(Path.home() / "Downloads")
+    output_dir = str(Path(raw_dir).expanduser()) if raw_dir else _default_download_dir()
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     job_id = str(uuid.uuid4())[:8]
     with jobs_lock:
@@ -715,40 +732,71 @@ def fonts_route(name):
     return send_from_directory(os.path.join(_bin_dir(), "fonts"), name, max_age=31536000)
 
 
-# ── Ayarlar: Windows başlangıçta otomatik açılma ─────────────────────────────
+# ── Ayarlar: başlangıçta otomatik açılma (Windows: registry, Linux: autostart) ──
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_NAME = "Aevum"
 
 
 def _launch_target() -> str:
-    # Paketli (frozen) exe yolu; geliştirmede pythonw + script
+    # AppImage içinden çalışıyorsa gerçek yol $APPIMAGE'tedir; sonra frozen exe; sonra dev
+    if os.environ.get("APPIMAGE"):
+        return f'"{os.environ["APPIMAGE"]}" --startup'
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}" --startup'
     return f'"{sys.executable}" "{os.path.abspath(__file__)}" --startup'
 
 
+def _linux_autostart_file() -> str:
+    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(cfg, "autostart", "aevum.desktop")
+
+
 def get_startup_enabled() -> bool:
-    if not winreg:
-        return False
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as k:
-            val, _ = winreg.QueryValueEx(k, _RUN_NAME)
-            return bool(val)
-    except (FileNotFoundError, OSError):
-        return False
+    if _IS_WINDOWS:
+        if not winreg:
+            return False
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as k:
+                val, _ = winreg.QueryValueEx(k, _RUN_NAME)
+                return bool(val)
+        except (FileNotFoundError, OSError):
+            return False
+    return os.path.isfile(_linux_autostart_file())
 
 
 def set_startup_enabled(enabled: bool):
-    if not winreg:
+    if _IS_WINDOWS:
+        if not winreg:
+            return
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as k:
+            if enabled:
+                winreg.SetValueEx(k, _RUN_NAME, 0, winreg.REG_SZ, _launch_target())
+            else:
+                try:
+                    winreg.DeleteValue(k, _RUN_NAME)
+                except FileNotFoundError:
+                    pass
         return
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as k:
-        if enabled:
-            winreg.SetValueEx(k, _RUN_NAME, 0, winreg.REG_SZ, _launch_target())
-        else:
-            try:
-                winreg.DeleteValue(k, _RUN_NAME)
-            except FileNotFoundError:
-                pass
+    # ── Linux: ~/.config/autostart/aevum.desktop yaz/sil ──
+    path = _linux_autostart_file()
+    if enabled:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        content = (
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Aevum\n"
+            "Comment=Download video and audio from any site\n"
+            f"Exec={_launch_target()}\n"
+            "Terminal=false\n"
+            "X-GNOME-Autostart-enabled=true\n"
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    else:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
 
 
 @app.route("/settings")
@@ -841,8 +889,19 @@ def main():
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit Aevum", quit_app),
     )
-    icon = pystray.Icon("aevum", icon_image, "Aevum", menu)
-    icon.run()
+    try:
+        icon = pystray.Icon("aevum", icon_image, "Aevum", menu)
+        icon.run()
+    except Exception:
+        # Tepsi başlatılamadı (ör. Linux'ta uygun tray backend'i yok) — çökme;
+        # sunucuyu ayakta tut, gerekirse sayfayı aç ki indirmeler yine çalışsın.
+        if tray_only:
+            webbrowser.open(f"http://localhost:{PORT}")
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            os._exit(0)
 
 
 if __name__ == "__main__":

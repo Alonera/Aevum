@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Aevum
+GenericName=Video Downloader
+Comment=Download video and audio from any site
+Exec=Aevum
+Icon=aevum
+Terminal=false
+Categories=AudioVideo;Network;Utility;
+Keywords=video;audio;download;youtube;yt-dlp;
