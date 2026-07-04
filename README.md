@@ -50,6 +50,12 @@ You only need to do this once.
 
 Aevum is a general-purpose front-end for yt-dlp. Only download content you have the right to save — your own uploads, Creative Commons material, sites that permit downloading, or your own paid accounts. You are responsible for how you use it. This project does not endorse or enable copyright infringement.
 
+## How it was built (honesty note)
+
+Aevum was **vibe-coded with the help of an AI assistant** — it was written collaboratively with AI rather than hand-coded line by line. I'm stating this openly so no one is misled about how it came to be.
+
+The real heavy lifting is done by two excellent open-source projects — [yt-dlp](https://github.com/yt-dlp/yt-dlp) (the actual downloading) and [FFmpeg](https://ffmpeg.org) (merging/converting). Aevum is essentially a clean, friendly, ad-free wrapper around them.
+
 ## Build from source
 
 Requires Python 3.10+.
