@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-ytdl_tray.py — Aevum (yt-dlp) System Tray Uygulaması
-Çift tıkla → tray'e oturur, tarayıcı açılır
-Sağ tıkla → Aç / Kapat
+ytdl_tray.py — Aevum (yt-dlp) İndirme Uygulaması
+
+Windows: çift tıkla → tray'e oturur, tarayıcı açılır; sağ tıkla → Aç / Kapat.
+Linux:   tepsi yok — başlatınca tarayıcı açılır, sekmeyi kapatınca uygulama
+         da tamamen kapanır (sayfadan gelen kalp atışı kesilince).
 
 yt-dlp'nin desteklediği ~1800 siteden video/ses indirir.
 """
@@ -23,16 +25,20 @@ try:
 except ImportError:
     winreg = None
 
-# ── Tray için gerekli import ─────────────────────────────────────────────────
-# pystray backend seçimini import sırasında yapar; Linux'ta uygun backend yoksa
-# (ör. Wayland, DISPLAY yok) burada patlayabilir → tepsisiz devam et, çökme.
-try:
-    import pystray
-    from PIL import Image, ImageDraw
-except Exception:
+# ── Tray için gerekli import (yalnızca Windows) ──────────────────────────────
+# Linux'ta tepsi kullanılmıyor: masaüstü ortamına göre ya hiç çıkmıyor ya da
+# işlevsiz düz bir kare görünüyordu. Linux'ta uygulama tarayıcı sekmesine bağlı
+# yaşar — sekme kapanınca kendini kapatır (aşağıda _browser_watchdog).
+if sys.platform == "win32":
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+    except Exception:
+        pystray = None
+        print("Uyari: tepsi (tray) kullanilamiyor — tarayici modunda calisiyor. "
+              "(kaynaktan calistiriyorsan: pip install pystray pillow flask)", flush=True)
+else:
     pystray = None
-    print("Uyari: tepsi (tray) kullanilamiyor — tarayici modunda calisiyor. "
-          "(kaynaktan calistiriyorsan: pip install pystray pillow flask)", flush=True)
 
 from flask import Flask, request, jsonify, render_template_string, send_from_directory
 import uuid
@@ -45,6 +51,17 @@ jobs = {}
 jobs_lock = threading.Lock()
 
 PORT = 5000
+
+# Sayfadan gelen son istek zamanı — Linux'ta yaşam süresi buna bağlı
+_last_seen = time.time()
+_page_seen = False  # sayfa en az bir kez bağlandı mı?
+
+
+@app.before_request
+def _touch_last_seen():
+    global _last_seen, _page_seen
+    _last_seen = time.time()
+    _page_seen = True
 
 
 def _bin_dir() -> str:
@@ -331,7 +348,7 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
   <div class="settingsbox" id="settingsbox">
     <div class="settings-panel" id="settingsPanel">
       <div class="settings-title" id="settingsTitle">Settings</div>
-      <label class="settings-row">
+      <label class="settings-row" id="startupRow">
         <span class="settings-label" id="settingsStartupLabel">Launch at startup</span>
         <span class="switch"><input type="checkbox" id="startupToggle" onchange="setStartup(this.checked)"/><span class="slider"></span></span>
       </label>
@@ -419,13 +436,13 @@ const SETTINGS_TEXT={
  ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.'}
 };
 const settingsPanel=document.getElementById('settingsPanel'),settingsbox=document.getElementById('settingsbox'),settingsTitle=document.getElementById('settingsTitle'),settingsStartupLabel=document.getElementById('settingsStartupLabel'),settingsHint=document.getElementById('settingsHint'),startupToggle=document.getElementById('startupToggle');
-const menuRow=document.getElementById('menuRow'),menuToggle=document.getElementById('menuToggle'),settingsMenuLabel=document.getElementById('settingsMenuLabel'),settingsMenuHint=document.getElementById('settingsMenuHint');
+const menuRow=document.getElementById('menuRow'),menuToggle=document.getElementById('menuToggle'),settingsMenuLabel=document.getElementById('settingsMenuLabel'),settingsMenuHint=document.getElementById('settingsMenuHint'),startupRow=document.getElementById('startupRow');
 function TS(k){const L=SETTINGS_TEXT[curLang]||SETTINGS_TEXT.en;return L[k]||SETTINGS_TEXT.en[k]||k;}
 function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');settingsMenuLabel.textContent=TS('menu');settingsMenuHint.textContent=TS('menuHint');}
 function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');}
 function closeSettings(){settingsPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(settingsbox&&!settingsbox.contains(e.target))closeSettings();});
-function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;menuRow.style.display=s.canMenu?'flex':'none';settingsMenuHint.style.display=s.canMenu?'block':'none';}).catch(()=>{});}
+function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';}).catch(()=>{});}
 function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startup:on})}).catch(()=>{});}
 function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
 // ── tüm pencereyi kaplayan etkileşimli parçacık ağı ──
@@ -491,6 +508,8 @@ applyTheme(curTheme);
 applyLang(curLang);
 loadSettings();
 loadHistory();
+// kalp atışı: Linux'ta sekme kapanınca uygulamanın kendini kapatmasını sağlar
+setInterval(()=>{fetch('/ping',{cache:'no-store'}).catch(()=>{});},3000);
 // ilk açılışta ayarları göster (bir kez)
 if(!localStorage.getItem('aevum_onboarded')){setTimeout(()=>settingsPanel.classList.add('open'),700);localStorage.setItem('aevum_onboarded','1');}
 </script>
@@ -761,6 +780,12 @@ def fonts_route(name):
     return send_from_directory(os.path.join(_bin_dir(), "fonts"), name, max_age=31536000)
 
 
+@app.route("/ping")
+def ping_route():
+    # Sayfanın kalp atışı; before_request _last_seen'i günceller
+    return jsonify({"ok": True})
+
+
 # ── Ayarlar: başlangıçta otomatik açılma (Windows: registry, Linux: autostart) ──
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_NAME = "Aevum"
@@ -951,6 +976,8 @@ def settings_get():
         "startup": get_startup_enabled(),
         "menu": get_menu_installed(),
         "canMenu": sys.platform.startswith("linux"),
+        # Başlangıçta açılma tepsiye oturmayı gerektirir → yalnızca Windows
+        "canStartup": _IS_WINDOWS,
     })
 
 
@@ -965,7 +992,7 @@ def settings_set():
                 uninstall_menu_entry()
         except OSError as e:
             return jsonify({"ok": False, "error": str(e)}), 500
-    if "startup" in data:
+    if "startup" in data and _IS_WINDOWS:
         try:
             set_startup_enabled(bool(data["startup"]))
         except OSError as e:
@@ -1044,6 +1071,37 @@ def start_flask():
     app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False)
 
 
+def _shutdown_now():
+    # Çalışan indirme süreçleri varsa (takılı kalmış vb.) onları da kapat
+    with jobs_lock:
+        procs = [j.get("proc") for j in jobs.values()]
+    for p in procs:
+        if p and p.poll() is None:
+            kill_process_tree(p.pid)
+    os._exit(0)
+
+
+def _browser_watchdog():
+    """Linux (tepsisiz mod): sayfadan kalp atışı kesilince uygulamayı kapat.
+
+    Sayfa her 3 sn'de /ping atar. Sekme kapanınca istekler durur; kısa bir
+    bekleme sonrası (sayfa yenileme/geçici kopmaları tolere eder) çıkılır.
+    Aktif bir indirme sürerken asla çıkılmaz — indirme biter, sayfa hâlâ
+    kapalıysa o zaman kapanır.
+    """
+    while True:
+        time.sleep(3)
+        with jobs_lock:
+            active = any(not j["done"] for j in jobs.values())
+        if active:
+            continue
+        # Sayfa hiç bağlanmadıysa (tarayıcı yavaş açılıyor olabilir) uzun bekle
+        grace = 15 if _page_seen else 120
+        if time.time() - _last_seen > grace:
+            print("Tarayici kapandi — Aevum kapaniyor.", flush=True)
+            _shutdown_now()
+
+
 def main():
     global PORT
     # Port meşgulse boş bir port bul (uygulamanın açılmama sorununu önler)
@@ -1055,13 +1113,28 @@ def main():
     url = f"http://localhost:{PORT}"
     print(f"AEVUM calisiyor -> {url}", flush=True)
 
-    # Menüye kurulu değilse yol göster (Linux + AppImage)
-    if (sys.platform.startswith("linux") and os.environ.get("APPIMAGE")
-            and not get_menu_installed()):
-        print("Ipucu: uygulama menusune kurmak icin arayuzde Ayarlar > "
-              "'Uygulama menusune kur' ac, ya da calistir: "
-              f"\"{os.environ['APPIMAGE']}\" --install", flush=True)
+    # ── Linux: tepsisiz mod — tarayıcı açılır, sekme kapanınca uygulama kapanır ──
+    if not _IS_WINDOWS:
+        # Eski sürümün "başlangıçta aç" girdisi tepsisiz modda anlamsız; temizle
+        try:
+            os.remove(_linux_autostart_file())
+        except OSError:
+            pass
+        # Menüye kurulu değilse yol göster (AppImage)
+        if os.environ.get("APPIMAGE") and not get_menu_installed():
+            print("Ipucu: uygulama menusune kurmak icin arayuzde Ayarlar > "
+                  "'Uygulama menusune kur' ac, ya da calistir: "
+                  f"\"{os.environ['APPIMAGE']}\" --install", flush=True)
+        _open_url(url)
+        threading.Thread(target=_browser_watchdog, daemon=True).start()
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            _shutdown_now()
+        return
 
+    # ── Windows: tepsi modu ──
     # --startup ile başlatıldıysa (açılışta otomatik) sayfayı açma, sadece tepside dur
     tray_only = "--startup" in sys.argv or "--tray" in sys.argv
     if not tray_only:
@@ -1079,7 +1152,7 @@ def main():
             icon.run()
             return
         except Exception as e:
-            # Tepsi başlatılamadı (ör. Wayland / panelde XEmbed yok) — çökme.
+            # Tepsi başlatılamadı — çökme, sunucuyu ayakta tut.
             print(f"Tepsi ikonu yok ({e.__class__.__name__}); tarayicidan kullan, "
                   f"kapatmak icin Ctrl+C.", flush=True)
 
