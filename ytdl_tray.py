@@ -63,6 +63,12 @@ def _find_binary(name: str) -> str:
     fname = name + sfx
     for cand in (os.path.join(_bin_dir(), fname), os.path.join(_bin_dir(), "bin", fname)):
         if os.path.isfile(cand):
+            # PyInstaller Linux/macOS'ta gömülü ikililerin +x iznini düşürür → geri ver
+            if sys.platform != "win32":
+                try:
+                    os.chmod(cand, 0o755)
+                except OSError:
+                    pass
             return cand
     return shutil.which(name) or fname
 
