@@ -173,7 +173,7 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .langbox{position:relative;font-family:'JetBrains Mono',monospace}
 .settingsbox{position:relative;font-family:'JetBrains Mono',monospace}
 .settings-panel{position:absolute;right:0;bottom:calc(100% + 8px);width:250px;background:rgba(14,14,18,0.97);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:14px 15px;opacity:0;max-height:0;overflow:hidden;transform:translateY(8px) scale(0.97);transform-origin:bottom right;pointer-events:none;transition:opacity .2s ease,transform .22s cubic-bezier(.2,.9,.3,1.25),max-height .28s ease;box-shadow:0 16px 40px -12px rgba(0,0,0,0.85)}
-.settings-panel.open{opacity:1;max-height:200px;transform:translateY(0) scale(1);pointer-events:auto}
+.settings-panel.open{opacity:1;max-height:340px;transform:translateY(0) scale(1);pointer-events:auto}
 .settings-title{font-size:10px;letter-spacing:2px;color:rgba(255,255,255,0.85);margin-bottom:13px;text-transform:uppercase}
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer}
 .settings-label{font-size:12px;color:rgba(255,255,255,0.82)}
@@ -336,6 +336,11 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
         <span class="switch"><input type="checkbox" id="startupToggle" onchange="setStartup(this.checked)"/><span class="slider"></span></span>
       </label>
       <div class="settings-hint" id="settingsHint"></div>
+      <label class="settings-row" id="menuRow" style="display:none;margin-top:13px">
+        <span class="settings-label" id="settingsMenuLabel">Add to app menu</span>
+        <span class="switch"><input type="checkbox" id="menuToggle" onchange="setMenu(this.checked)"/><span class="slider"></span></span>
+      </label>
+      <div class="settings-hint" id="settingsMenuHint" style="display:none"></div>
     </div>
     <button class="lang-toggle" id="settingsToggle" onclick="toggleSettings(event)" aria-label="Settings">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.4-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.4-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.4V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.4 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.4 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.4 1z"/></svg>
@@ -404,23 +409,25 @@ function closeThemeMenu(){themeMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(themebox&&!themebox.contains(e.target))closeThemeMenu();});
 // ── ayarlar ──
 const SETTINGS_TEXT={
- en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with Windows and waits quietly in the tray — open it whenever you need it.'},
- tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, Windows ile birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.'},
- es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con Windows y espera en la bandeja — ábrelo cuando lo necesites.'},
- de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit Windows und wartet im Infobereich — öffne es bei Bedarf.'},
- fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec Windows et attend dans la barre — ouvre-le au besoin.'},
- it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con Windows e resta nella barra — aprilo quando serve.'},
- pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o Windows e espera na bandeja — abra quando precisar.'},
- ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с Windows и ждёт в трее — откройте, когда понадобится.'}
+ en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.'},
+ tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın."},
+ es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con el sistema y espera en la bandeja — ábrelo cuando lo necesites.',menu:'Añadir al menú',menuHint:'Instala Aevum en el menú de aplicaciones — ábrelo como una app normal, sin terminal.'},
+ de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit dem System und wartet im Infobereich — öffne es bei Bedarf.',menu:'Zum App-Menü hinzufügen',menuHint:'Installiert Aevum ins Anwendungsmenü — starte es wie eine normale App, ohne Terminal.'},
+ fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec le système et attend dans la barre — ouvre-le au besoin.',menu:'Ajouter au menu',menuHint:"Installe Aevum dans le menu des applications — lance-le comme une app normale, sans terminal."},
+ it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con il sistema e resta nella barra — aprilo quando serve.',menu:'Aggiungi al menu',menuHint:'Installa Aevum nel menu delle applicazioni — avvialo come una normale app, senza terminale.'},
+ pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o sistema e espera na bandeja — abra quando precisar.',menu:'Adicionar ao menu',menuHint:'Instala o Aevum no menu de aplicativos — abra como um app normal, sem terminal.'},
+ ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.'}
 };
 const settingsPanel=document.getElementById('settingsPanel'),settingsbox=document.getElementById('settingsbox'),settingsTitle=document.getElementById('settingsTitle'),settingsStartupLabel=document.getElementById('settingsStartupLabel'),settingsHint=document.getElementById('settingsHint'),startupToggle=document.getElementById('startupToggle');
+const menuRow=document.getElementById('menuRow'),menuToggle=document.getElementById('menuToggle'),settingsMenuLabel=document.getElementById('settingsMenuLabel'),settingsMenuHint=document.getElementById('settingsMenuHint');
 function TS(k){const L=SETTINGS_TEXT[curLang]||SETTINGS_TEXT.en;return L[k]||SETTINGS_TEXT.en[k]||k;}
-function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');}
+function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');settingsMenuLabel.textContent=TS('menu');settingsMenuHint.textContent=TS('menuHint');}
 function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');}
 function closeSettings(){settingsPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(settingsbox&&!settingsbox.contains(e.target))closeSettings();});
-function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;}).catch(()=>{});}
+function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;menuRow.style.display=s.canMenu?'flex':'none';settingsMenuHint.style.display=s.canMenu?'block':'none';}).catch(()=>{});}
 function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startup:on})}).catch(()=>{});}
+function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
 // ── tüm pencereyi kaplayan etkileşimli parçacık ağı ──
 const cv=document.getElementById('bg'),cx=cv.getContext('2d',{alpha:true});
 const REDUCE=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -760,7 +767,9 @@ _RUN_NAME = "Aevum"
 
 
 def _launch_target() -> str:
-    # AppImage içinden çalışıyorsa gerçek yol $APPIMAGE'tedir; sonra frozen exe; sonra dev
+    # En kalıcı hedef menüye kurulu kopya; sonra $APPIMAGE; sonra frozen exe; sonra dev
+    if sys.platform.startswith("linux") and os.path.isfile(_installed_appimage()):
+        return f'"{_installed_appimage()}" --startup'
     if os.environ.get("APPIMAGE"):
         return f'"{os.environ["APPIMAGE"]}" --startup'
     if getattr(sys, "frozen", False):
@@ -821,20 +830,148 @@ def set_startup_enabled(enabled: bool):
             pass
 
 
+# ── Linux: uygulama menüsüne kurulum ("indir, kur, kalsın") ──────────────────
+# AppImage'ı ~/.local/share/aevum/ altına kopyalar, menüye .desktop + ikon yazar;
+# sonrasında terminal gerekmeden menüden normal bir uygulama gibi başlar.
+
+def _xdg_data_home() -> str:
+    return os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+
+
+def _menu_desktop_file() -> str:
+    return os.path.join(_xdg_data_home(), "applications", "aevum.desktop")
+
+
+def _menu_icon_file() -> str:
+    return os.path.join(_xdg_data_home(), "icons", "hicolor", "256x256", "apps", "aevum.png")
+
+
+def _installed_appimage() -> str:
+    return os.path.join(_xdg_data_home(), "aevum", "Aevum.AppImage")
+
+
+def get_menu_installed() -> bool:
+    return os.path.isfile(_menu_desktop_file())
+
+
+def _source_icon() -> str:
+    # 1) PyInstaller paketi  2) AppImage kök dizini ($APPDIR)  3) script yanı
+    cands = [os.path.join(_bin_dir(), "aevum.png"),
+             os.path.join(os.path.dirname(os.path.abspath(__file__)), "aevum.png")]
+    if os.environ.get("APPDIR"):
+        cands.insert(1, os.path.join(os.environ["APPDIR"], "aevum.png"))
+    for cand in cands:
+        if os.path.isfile(cand):
+            return cand
+    return ""
+
+
+def _refresh_menu_caches():
+    """Masaüstü ortamının menü/ikon önbelleğini tazele (varsa; hata önemsiz)."""
+    for cmd in (["update-desktop-database", os.path.dirname(_menu_desktop_file())],
+                ["gtk-update-icon-cache", "-f", "-t",
+                 os.path.join(_xdg_data_home(), "icons", "hicolor")]):
+        exe = shutil.which(cmd[0])
+        if exe:
+            try:
+                subprocess.run([exe] + cmd[1:], env=_clean_env(), check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=15)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+
+def install_menu_entry() -> None:
+    appimage = os.environ.get("APPIMAGE")
+    if appimage and os.path.isfile(appimage):
+        target = _installed_appimage()
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.abspath(appimage) != os.path.abspath(target):
+            shutil.copy2(appimage, target)
+        os.chmod(target, 0o755)
+        exec_line = f'"{target}"'
+    elif getattr(sys, "frozen", False):
+        exec_line = f'"{sys.executable}"'
+    else:
+        exec_line = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+
+    icon_src = _source_icon()
+    if icon_src:
+        os.makedirs(os.path.dirname(_menu_icon_file()), exist_ok=True)
+        shutil.copy2(icon_src, _menu_icon_file())
+
+    path = _menu_desktop_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    content = (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Aevum\n"
+        "Comment=Download video and audio from any site\n"
+        "Comment[tr]=Her siteden video ve ses indir\n"
+        f"Exec={exec_line}\n"
+        "Icon=aevum\n"
+        "Terminal=false\n"
+        "Categories=Network;FileTransfer;AudioVideo;\n"
+        "StartupNotify=false\n"
+    )
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    _refresh_menu_caches()
+
+
+def uninstall_menu_entry() -> None:
+    for p in (_menu_desktop_file(), _menu_icon_file()):
+        try:
+            os.remove(p)
+        except FileNotFoundError:
+            pass
+    try:
+        os.remove(_installed_appimage())
+    except FileNotFoundError:
+        pass
+    try:
+        os.rmdir(os.path.dirname(_installed_appimage()))
+    except OSError:
+        pass
+    # kurulu kopyaya işaret eden autostart girdisi kırık kalmasın
+    auto = _linux_autostart_file()
+    if os.path.isfile(auto):
+        try:
+            with open(auto, encoding="utf-8") as f:
+                if _installed_appimage() in f.read():
+                    os.remove(auto)
+        except OSError:
+            pass
+    _refresh_menu_caches()
+
+
 @app.route("/settings")
 def settings_get():
-    return jsonify({"startup": get_startup_enabled()})
+    return jsonify({
+        "startup": get_startup_enabled(),
+        "menu": get_menu_installed(),
+        "canMenu": sys.platform.startswith("linux"),
+    })
 
 
 @app.route("/settings", methods=["POST"])
 def settings_set():
     data = request.json or {}
+    if "menu" in data and sys.platform.startswith("linux"):
+        try:
+            if data["menu"]:
+                install_menu_entry()
+            else:
+                uninstall_menu_entry()
+        except OSError as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
     if "startup" in data:
         try:
             set_startup_enabled(bool(data["startup"]))
         except OSError as e:
             return jsonify({"ok": False, "error": str(e)}), 500
-    return jsonify({"ok": True, "startup": get_startup_enabled()})
+    return jsonify({"ok": True, "startup": get_startup_enabled(),
+                    "menu": get_menu_installed()})
 
 
 # ── Tray ikonu oluştur ───────────────────────────────────────────────────────
@@ -918,6 +1055,13 @@ def main():
     url = f"http://localhost:{PORT}"
     print(f"AEVUM calisiyor -> {url}", flush=True)
 
+    # Menüye kurulu değilse yol göster (Linux + AppImage)
+    if (sys.platform.startswith("linux") and os.environ.get("APPIMAGE")
+            and not get_menu_installed()):
+        print("Ipucu: uygulama menusune kurmak icin arayuzde Ayarlar > "
+              "'Uygulama menusune kur' ac, ya da calistir: "
+              f"\"{os.environ['APPIMAGE']}\" --install", flush=True)
+
     # --startup ile başlatıldıysa (açılışta otomatik) sayfayı açma, sadece tepside dur
     tray_only = "--startup" in sys.argv or "--tray" in sys.argv
     if not tray_only:
@@ -950,4 +1094,14 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.platform.startswith("linux") and "--uninstall" in sys.argv:
+        uninstall_menu_entry()
+        print("Aevum uygulama menusunden kaldirildi. (Removed from the app menu.)",
+              flush=True)
+        sys.exit(0)
+    if sys.platform.startswith("linux") and "--install" in sys.argv:
+        install_menu_entry()
+        print("Aevum uygulama menusune kuruldu — artik menuden baslatabilirsin. "
+              "(Installed to the app menu.)", flush=True)
+        sys.exit(0)
     main()

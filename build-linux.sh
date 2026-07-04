@@ -16,6 +16,7 @@ rm -rf build dist Aevum.spec
 pyinstaller --noconfirm --clean --name Aevum \
   --add-data "bin/yt-dlp:." \
   --add-data "bin/ffmpeg:." \
+  --add-data "aevum.png:." \
   --add-data "fonts:fonts" \
   --hidden-import "pystray._xorg" \
   --collect-submodules "Xlib" \
