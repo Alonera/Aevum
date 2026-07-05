@@ -12,12 +12,13 @@ Two ways, both on the [**Releases**](../../releases) page:
 
 - **`Aevum-Setup.exe`** — installer. Installs Aevum, with optional Desktop and Start Menu shortcuts, and an uninstaller. No admin rights needed.
 - **`Aevum.exe`** — portable. Just double-click; no install.
+- **`Aevum-x86_64.AppImage`** — Linux. Make it executable (`chmod +x`) and run; optionally add it to your app menu from Settings inside the app.
 
-Aevum lives in your system tray and opens its interface in your browser (`localhost`). Right-click the tray icon to open or quit.
+Aevum opens its interface in your browser (`localhost`). On **Windows** it lives in your system tray — right-click the tray icon to open or quit. On **Linux** there is no tray: the app runs while its browser tab is open and quits automatically when you close the tab (an active download keeps it alive until it finishes).
 
 ### Settings
 
-Click the ⚙️ gear (next to the language picker) to open Settings. **Launch at startup** makes Aevum start with Windows and wait quietly in the tray (it does *not* pop the window open) — open it from the tray icon whenever you need it. Shown once on first run; changeable anytime.
+Click the ⚙️ gear (next to the language picker) to open Settings. **Launch at startup** (Windows only) makes Aevum start with Windows and wait quietly in the tray (it does *not* pop the window open) — open it from the tray icon whenever you need it. On Linux the Settings panel offers **Add to app menu** instead, which installs Aevum as a regular menu app — it copies the AppImage into `~/.local/share/aevum/`, so you can delete the downloaded file afterwards; unticking removes the copy, menu entry and icon. Shown once on first run; changeable anytime.
 
 ### First run — the Windows "unknown publisher" warning
 
