@@ -1,6 +1,6 @@
 # Aevum
 
-**Aevum** — a simple, self-contained desktop app to download videos and audio from **any site**: YouTube, Vimeo, Twitter/X, Dailymotion, Twitch, and ~1,800 more (anything [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports). No installation, no dependencies: everything is bundled into a single `.exe`.
+**Aevum** — a simple, self-contained desktop app to download videos and audio from **any site**: YouTube, Vimeo, Twitter/X, Dailymotion, Twitch, and ~1,800 more (anything [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports). No installation, no dependencies: everything is bundled into a single executable (`.exe` on Windows, AppImage on Linux).
 
 **Free, open source, and completely ad-free** — no ads, no tracking, no bundled extras. Just the download.
 

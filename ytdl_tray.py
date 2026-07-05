@@ -515,8 +515,9 @@ function toggleFlag(key,btn){state[key]=!state[key];btn.classList.toggle('tog-on
 function setMode(m){const vr=document.getElementById('vrows'),ar=document.getElementById('arows');if(m==='audio'){requestAnimationFrame(()=>{vr.classList.add('hide');vr.style.maxHeight='0'});ar.classList.remove('hide');ar.style.maxHeight='200px';ar.style.opacity='1';}else{requestAnimationFrame(()=>{ar.classList.add('hide');ar.style.maxHeight='0'});vr.classList.remove('hide');vr.style.maxHeight='240px';vr.style.opacity='1';}}
 function go(){const url=inp.value.trim();if(!url||gb.disabled)return;const dir=document.getElementById('dir').value.trim();gb.disabled=true;pw.classList.add('show');stopbtn.classList.add('show');pf.style.width='5%';pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';fetch('/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,...state,dir})}).then(r=>r.json()).then(d=>{jobId=d.job_id;poll();}).catch(()=>{gb.disabled=false;stopbtn.classList.remove('show');pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';});}
 function cancelJob(){if(!jobId)return;stopbtn.classList.remove('show');pt.textContent=T('stopping');pt.style.color='rgba(255,150,90,0.9)';fetch('/cancel/'+jobId,{method:'POST'});}
-function poll(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(()=>{fetch('/status/'+jobId).then(r=>r.json()).then(d=>{if(d.progress!==undefined)pf.style.width=d.progress+'%';pt.textContent=statusText(d);if(!d.done)pt.style.color=(d.code==='process')?'rgba(var(--accent),0.6)':'rgba(var(--accent),0.5)';if(d.done){clearInterval(pollTimer);gb.disabled=false;stopbtn.classList.remove('show');if(d.success){pf.style.width='100%';pt.style.color='rgba(var(--accent),0.7)';}else if(d.code==='stopped'){pf.style.width='0%';pt.style.color='rgba(255,150,90,0.9)';}else{pt.style.color='rgba(255,100,80,0.8)';}loadHistory();}});},700);}
-function loadHistory(){fetch('/history').then(r=>r.json()).then(items=>{if(!items.length)return;document.getElementById('hist-wrap').style.display='block';document.getElementById('hist-list').innerHTML=items.map(h=>`<div class="hist-item"><span class="hist-url">${h.url}</span><span class="hist-meta">${h.meta}</span><span class="${h.success?'hist-ok':'hist-err'}">${h.success?'✓':'✗'}</span></div>`).join('');});}
+function poll(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(()=>{fetch('/status/'+jobId).then(r=>r.json()).then(d=>{if(d.progress!==undefined)pf.style.width=d.progress+'%';pt.textContent=statusText(d);if(!d.done)pt.style.color=(d.code==='process')?'rgba(var(--accent),0.6)':'rgba(var(--accent),0.5)';if(d.done){clearInterval(pollTimer);gb.disabled=false;stopbtn.classList.remove('show');if(d.success){pf.style.width='100%';pt.style.color='rgba(var(--accent),0.7)';}else if(d.code==='stopped'){pf.style.width='0%';pt.style.color='rgba(255,150,90,0.9)';}else{pt.style.color='rgba(255,100,80,0.8)';}loadHistory();}}).catch(()=>{});},700);}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function loadHistory(){fetch('/history').then(r=>r.json()).then(items=>{if(!items.length)return;document.getElementById('hist-wrap').style.display='block';document.getElementById('hist-list').innerHTML=items.map(h=>`<div class="hist-item"><span class="hist-url">${esc(h.url)}</span><span class="hist-meta">${esc(h.meta)}</span><span class="${h.success?'hist-ok':'hist-err'}">${h.success?'✓':'✗'}</span></div>`).join('');}).catch(()=>{});}
 applyTheme(curTheme);
 applyLang(curLang);
 loadSettings();
@@ -662,6 +663,9 @@ def run_job(job_id: str, data: dict, output_dir: str):
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", bufsize=1,
                                 env=_clean_env(),
+                                # POSIX: own process group, else kill_process_tree's
+                                # killpg would hit Aevum's group and take the app down
+                                start_new_session=sys.platform != "win32",
                                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
         with jobs_lock:
             jobs[job_id]["proc"] = proc
