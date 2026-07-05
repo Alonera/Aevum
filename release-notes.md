@@ -19,6 +19,7 @@ Self-contained — yt-dlp and FFmpeg are bundled.
 
 - Cleaned `LD_LIBRARY_PATH` for child processes so bundled yt-dlp/FFmpeg run correctly on every distro.
 - App lifetime verified: the server really stops after the tab closes (grace period for reconnects, then clean exit).
+- **Stop button (Linux):** cancelling a download used to kill the whole app, not just the download — downloads now run in their own process group, so Stop only stops the download. (Assets refreshed 2026-07-05 with this fix.)
 
 Windows users: nothing new here — stay on **v1.0.0** builds (`Aevum-Setup.exe` / `Aevum.exe`), they are unchanged.
 
