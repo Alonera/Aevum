@@ -5,6 +5,9 @@ on:
   push:
     tags: ['v*']            # also build + attach to a release on version tags
 
+permissions:
+  contents: write           # let the workflow create/update releases
+
 jobs:
   linux:
     runs-on: ubuntu-latest
