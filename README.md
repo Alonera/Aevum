@@ -18,7 +18,7 @@ Aevum opens its interface in your browser (`localhost`). On **Windows** it lives
 
 ### Settings
 
-Click the ⚙️ gear (next to the language picker) to open Settings. **Launch at startup** (Windows only) makes Aevum start with Windows and wait quietly in the tray (it does *not* pop the window open) — open it from the tray icon whenever you need it. On Linux the Settings panel offers **Add to app menu** instead, which installs Aevum as a regular menu app. Shown once on first run; changeable anytime.
+Click the ⚙️ gear (next to the language picker) to open Settings. **Launch at startup** (Windows only) makes Aevum start with Windows and wait quietly in the tray (it does *not* pop the window open) — open it from the tray icon whenever you need it. On Linux the Settings panel offers **Add to app menu** instead, which installs Aevum as a regular menu app — it copies the AppImage into `~/.local/share/aevum/`, so you can delete the downloaded file afterwards; unticking removes the copy, menu entry and icon. Shown once on first run; changeable anytime.
 
 ### First run — the Windows "unknown publisher" warning
 
