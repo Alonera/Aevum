@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-ytdl_tray.py — Aevum (yt-dlp) İndirme Uygulaması
+ytdl_tray.py — Aevum download app
 
-Windows: çift tıkla → tray'e oturur, tarayıcı açılır; sağ tıkla → Aç / Kapat.
-Linux:   tepsi yok — başlatınca tarayıcı açılır, sekmeyi kapatınca uygulama
-         da tamamen kapanır (sayfadan gelen kalp atışı kesilince).
+Windows: double-click puts it in the system tray and opens the browser UI;
+right-click the tray icon to open or quit.
+Linux: no tray — launching opens the browser page, and the app shuts down
+once the last tab is closed (tracked via a heartbeat from the page).
 
-yt-dlp'nin desteklediği ~1800 siteden video/ses indirir.
+Downloads video/audio from the ~1800 sites yt-dlp supports.
 """
 
 import os
@@ -22,14 +23,14 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 try:
-    import winreg  # Windows başlangıç ayarı için
+    import winreg  # Windows launch-at-startup setting
 except ImportError:
     winreg = None
 
-# ── Tray için gerekli import (yalnızca Windows) ──────────────────────────────
-# Linux'ta tepsi kullanılmıyor: masaüstü ortamına göre ya hiç çıkmıyor ya da
-# işlevsiz düz bir kare görünüyordu. Linux'ta uygulama tarayıcı sekmesine bağlı
-# yaşar — sekme kapanınca kendini kapatır (aşağıda _browser_watchdog).
+# ── Tray imports (Windows only) ──────────────────────────────────────────────
+# We don't use a tray on Linux: depending on the desktop it either didn't show
+# up at all or rendered as a dead flat square. Instead the app is tied to the
+# browser tab and exits when the tab closes (see _browser_watchdog below).
 if sys.platform == "win32":
     try:
         import pystray
@@ -44,7 +45,7 @@ else:
 from flask import Flask, request, jsonify, render_template_string, send_from_directory
 import uuid
 
-# ── Flask uygulaması ─────────────────────────────────────────────────────────
+# ── Flask app ─────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 download_history = []
 history_lock = threading.Lock()
@@ -53,19 +54,19 @@ jobs_lock = threading.Lock()
 
 PORT = 5000
 
-# ── Sayfa yaşam takibi (Linux'ta uygulama tarayıcı sekmesiyle yaşar) ─────────
-_last_seen = time.time()   # sayfadan gelen son istek zamanı
-_page_seen = False         # sayfa en az bir kez bağlandı mı?
-_clients = {}              # sekme kimliği -> son kalp atışı zamanı
+# ── Page liveness tracking (on Linux the app lives with the browser tab) ─────
+_last_seen = time.time()   # time of the last request from the page
+_page_seen = False         # has the page connected at least once?
+_clients = {}              # tab id -> last heartbeat time
 _clients_lock = threading.Lock()
 
-# Tarayıcılar arka plan sekmelerinde zamanlayıcıları kısar (Chrome: dakikada 1'e
-# kadar). Bu yüzden kalp atışı tek başına yeterli değil: temiz kapanışta sayfa
-# /bye gönderir (hızlı çıkış), kalp atışı ise uzun süreli yedek olarak kalır.
-_EXIT_GRACE = 15     # sn — son sekme kapandıktan sonra bekleme
-_FIRST_GRACE = 120   # sn — sayfa hiç bağlanmadıysa (tarayıcı yavaş açılabilir)
-_CLIENT_STALE = 90   # sn — bu kadar süre ping atmayan sekme ölü sayılır
-                     #      (arka plan kısıtlamasındaki sekme ~60 sn'de bir atar)
+# Browsers throttle timers in background tabs (Chrome: down to once a minute),
+# so the heartbeat alone isn't enough. On a clean close the page sends /bye
+# for a fast exit; the heartbeat stays as a long-term fallback.
+_EXIT_GRACE = 15     # s — wait this long after the last tab closes
+_FIRST_GRACE = 120   # s — if no page connected yet (browser can be slow to start)
+_CLIENT_STALE = 90   # s — a tab silent for this long counts as dead
+                     #     (a throttled background tab still pings ~every 60s)
 
 
 @app.before_request
@@ -76,19 +77,19 @@ def _touch_last_seen():
 
 
 def _bin_dir() -> str:
-    """Gömülü ikili dosyaların bulunduğu klasör (PyInstaller çıkarma dizini ya da script yanı)."""
+    """Folder with the bundled binaries (PyInstaller extraction dir, or next to this script)."""
     if getattr(sys, "frozen", False):
         return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_binary(name: str) -> str:
-    """Önce uygulamayla gelen gömülü ikiliyi, yoksa PATH'i kullan."""
+    """Prefer the binary shipped with the app, fall back to PATH."""
     sfx = ".exe" if sys.platform == "win32" else ""
     fname = name + sfx
     for cand in (os.path.join(_bin_dir(), fname), os.path.join(_bin_dir(), "bin", fname)):
         if os.path.isfile(cand):
-            # PyInstaller Linux/macOS'ta gömülü ikililerin +x iznini düşürür → geri ver
+            # PyInstaller drops the +x bit of bundled binaries on Linux/macOS — restore it
             if sys.platform != "win32":
                 try:
                     os.chmod(cand, 0o755)
@@ -99,12 +100,12 @@ def _find_binary(name: str) -> str:
 
 
 def _clean_env() -> dict:
-    """Alt süreçler için temiz ortam.
+    """Clean environment for child processes.
 
-    PyInstaller, Linux'ta LD_LIBRARY_PATH'i kendi bundle klasörüne çevirir ve bu
-    tüm alt süreçlere miras kalır: xdg-open ile açılan tarayıcı bizim glib/gio
-    kopyalarımızı yükleyip sessizce çöker, yt-dlp/ffmpeg de etkilenebilir.
-    Bootloader orijinali LD_LIBRARY_PATH_ORIG'de saklar — onu geri koy.
+    On Linux, PyInstaller points LD_LIBRARY_PATH at its own bundle dir and every
+    child inherits it: a browser launched via xdg-open picks up our copies of
+    glib/gio and silently crashes, and yt-dlp/ffmpeg can be affected too. The
+    bootloader keeps the original in LD_LIBRARY_PATH_ORIG — put it back.
     """
     env = os.environ.copy()
     if getattr(sys, "frozen", False) and sys.platform not in ("win32", "darwin"):
@@ -116,7 +117,7 @@ def _clean_env() -> dict:
     return env
 
 
-# Gömülü (bundled) yt-dlp + ffmpeg; hiçbir kurulum gerektirmeden çalışır
+# Bundled yt-dlp + ffmpeg; works without installing anything
 YTDLP = _find_binary("yt-dlp")
 _FFMPEG = _find_binary("ffmpeg")
 FFMPEG_DIR = os.path.dirname(_FFMPEG) if os.path.isfile(_FFMPEG) else ""
@@ -395,7 +396,7 @@ const glow=document.getElementById('glow'),root=document.getElementById('root');
 const note=document.getElementById('note'),stopbtn=document.getElementById('stopbtn');
 let jobId=null,pollTimer=null;
 const state={mode:'video',vq:'1080p',cont:'mp4',fmt:'mp3',br:'192k',cookies:'none',subs:false,mute:false,playlist:false};
-// ── çok dilli metinler (i18n) ──
+// ── i18n strings ──
 const I18N={
  en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download.",appClosed:"⚠ Aevum has quit — relaunch the app to continue."},
  tr:{urlPlaceholder:"Video bağlantısını yapıştır — her site desteklenir",download:"İndir",mode:"Mod",video:"Video",audio:"Ses",quality:"Kalite",best:"En İyi",container:"Biçim",options:"Seçenek",subtitles:"Altyazı",mute:"Sessiz",format:"Format",bitrate:"Bit Hızı",source:"Kaynak",cookies:"Çerezler",none:"Yok",cookiesHint:"Giriş yapman gereken sitelerden (kendi hesabınla) indirmek için tarayıcının oturumunu kullanır. O tarayıcıyı önce kapat.",playlist:"Liste",downloadPlaylist:"Oynatma Listesini İndir",folder:"Klasör",history:"Geçmiş",stop:"Durdur",connecting:"bağlanıyor...",starting:"başlatılıyor...",downloading:"İndiriliyor",processing:"işleniyor...",completed:"tamamlandı ✓",stopping:"durduruluyor...",stopped:"durduruldu",errorGeneric:"hata oluştu — konsolu kontrol et",connError:"bağlantı hatası",mixWarn:"⚠ YouTube Mix (radyo) listesi sonsuzdur — ilk 50 video indirilecek.",mixInfo:"ℹ Bu bir Mix bağlantısı. Liste kapalı, yalnızca bu video inecek.",appClosed:"⚠ Aevum kapandı — devam etmek için uygulamayı yeniden başlat."},
@@ -418,7 +419,7 @@ function toggleLangMenu(e){e.stopPropagation();langMenu.classList.toggle('open')
 function closeLangMenu(){langMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(langbox&&!langbox.contains(e.target))closeLangMenu();});
 function statusText(d){const tag=d.item?'['+d.item+'] ':'';switch(d.code){case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%';case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed');case 'stopped':return T('stopped');case 'error':return d.error_line?d.error_line.slice(0,110):T('errorGeneric');default:return '';}}
-// ── temalar (renk vurgusu) ──
+// ── themes (accent color) ──
 const THEME_LIST=[['green','0,230,160'],['blue','96,165,250'],['purple','167,139,250'],['dynamic',null]];
 const THEME_NAMES={en:{green:'Green',blue:'Blue',purple:'Purple',dynamic:'Dynamic'},tr:{green:'Yeşil',blue:'Mavi',purple:'Mor',dynamic:'Değişken'},es:{green:'Verde',blue:'Azul',purple:'Púrpura',dynamic:'Dinámico'},de:{green:'Grün',blue:'Blau',purple:'Lila',dynamic:'Dynamisch'},fr:{green:'Vert',blue:'Bleu',purple:'Violet',dynamic:'Dynamique'},it:{green:'Verde',blue:'Blu',purple:'Viola',dynamic:'Dinamico'},pt:{green:'Verde',blue:'Azul',purple:'Roxo',dynamic:'Dinâmico'},ru:{green:'Зелёный',blue:'Синий',purple:'Фиолетовый',dynamic:'Динамический'}};
 function TT(id){const L=THEME_NAMES[curLang]||THEME_NAMES.en;return L[id]||THEME_NAMES.en[id]||id;}
@@ -435,7 +436,7 @@ function selectTheme(t){applyTheme(t);saveCfg({theme:t});closeThemeMenu();}
 function toggleThemeMenu(e){e.stopPropagation();themeMenu.classList.toggle('open');}
 function closeThemeMenu(){themeMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(themebox&&!themebox.contains(e.target))closeThemeMenu();});
-// ── ayarlar ──
+// ── settings ──
 const SETTINGS_TEXT={
  en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.'},
  tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın."},
@@ -457,10 +458,10 @@ function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'ap
 function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';if(s.lang&&I18N[s.lang]&&s.lang!==curLang)applyLang(s.lang);if(s.theme&&THEME_LIST.some(x=>x[0]===s.theme)&&s.theme!==curTheme)applyTheme(s.theme);}).catch(()=>{});}
 function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startup:on})}).catch(()=>{});}
 function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
-// ── tüm pencereyi kaplayan etkileşimli parçacık ağı ──
+// ── full-window interactive particle network ──
 const cv=document.getElementById('bg'),cx=cv.getContext('2d',{alpha:true});
 const REDUCE=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-const REP=130,REP2=REP*REP,CON=110,CON2=CON*CON;   // itme / bağlantı mesafeleri (canvas uzayı)
+const REP=130,REP2=REP*REP,CON=110,CON2=CON*CON;   // repel / link distances (canvas space)
 let W=0,H=0,scale=1,parts=[];
 const ptr={x:-9999,y:-9999,inside:false};
 let rL=0,rT=0,rW=1,rH=1;
@@ -495,7 +496,7 @@ function frame(now){
   const mx=ptr.inside?ptr.x*scale:-99999,my=ptr.inside?ptr.y*scale:-99999;
   for(const p of parts){p.x+=p.vx*dt;p.y+=p.vy*dt;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1;const dx=p.x-mx,dy=p.y-my,d2=dx*dx+dy*dy;if(d2<REP2){const d=Math.sqrt(d2)||1,f=(REP-d)/REP*1.1*dt;p.x+=dx/d*f;p.y+=dy/d*f;}}
   drawScene();
-  // ── donanıma uyum: yavaşsa parçacık azalt, akıcıysa geri ekle ──
+  // ── adapt to the hardware: shed particles when slow, add back when smooth ──
   winF++;if(now-winT>=1000){const fps=winF*1000/(now-winT);winF=0;winT=now;
     if(fps<45&&parts.length>28)parts.length=Math.max(28,parts.length-8);
     else if(fps>=58&&parts.length<idealCount())for(let k=0;k<6&&parts.length<idealCount();k++)parts.push(newPart());}
@@ -520,14 +521,14 @@ applyTheme(curTheme);
 applyLang(curLang);
 loadSettings();
 loadHistory();
-// ── yaşam sinyali: Linux'ta sekme kapanınca uygulama kendini kapatır ──
+// ── liveness signal: on Linux the app quits once the tab closes ──
 const CID=Math.random().toString(36).slice(2)+Date.now().toString(36);
 let pingFails=0;
 function showDead(){if(document.getElementById('deadbar'))return;const b=document.createElement('div');b.id='deadbar';b.textContent=T('appClosed');b.style.cssText='position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99;background:rgba(40,12,10,0.95);border:1px solid rgba(255,100,80,0.45);color:rgba(255,150,130,0.95);font-family:inherit;font-size:11px;padding:9px 16px;border-radius:9px;box-shadow:0 10px 30px -8px rgba(0,0,0,0.8)';document.body.appendChild(b);}
 setInterval(()=>{fetch('/ping?id='+CID,{cache:'no-store'}).then(()=>{pingFails=0;const b=document.getElementById('deadbar');if(b)b.remove();}).catch(()=>{if(++pingFails>=4)showDead();});},3000);
-// sekme kapanırken haber ver (hızlı, temiz çıkış; yenilemede yeni sayfa hemen geri bağlanır)
+// announce the tab closing (fast clean exit; after a reload the new page reconnects right away)
 window.addEventListener('pagehide',()=>{try{navigator.sendBeacon('/bye?id='+CID);}catch(e){}});
-// ilk açılışta ayarları göster (bir kez)
+// show the settings panel on first launch (once)
 if(!localStorage.getItem('aevum_onboarded')){setTimeout(()=>settingsPanel.classList.add('open'),700);localStorage.setItem('aevum_onboarded','1');}
 </script>
 </body>
@@ -537,7 +538,7 @@ if(!localStorage.getItem('aevum_onboarded')){setTimeout(()=>settingsPanel.classL
 HEIGHT_MAP = {"4k": "2160", "1440p": "1440", "1080p": "1080",
               "720p": "720", "480p": "480", "360p": "360"}
 
-MIX_CAP = 50  # YouTube Mix/radyo listeleri sonsuzdur; bu kadarla sınırla
+MIX_CAP = 50  # YouTube Mix/radio playlists are endless; cap them here
 
 
 def playlist_id(url: str) -> str:
@@ -548,7 +549,7 @@ def playlist_id(url: str) -> str:
 
 
 def is_mix_playlist(url: str) -> bool:
-    # YouTube Mix/radyo listelerinin kimliği "RD" ile başlar (RDMM, RDCLAK, RDEM...)
+    # YouTube Mix/radio playlist ids start with "RD" (RDMM, RDCLAK, RDEM...)
     return playlist_id(url).startswith("RD")
 
 
@@ -565,14 +566,14 @@ def kill_process_tree(pid: int):
 
 
 def build_video_format(vq: str, container: str, mute: bool) -> str:
-    """Siteden bağımsız biçim seçici. Ayrık akış yoksa birleşik akışa düşer."""
+    """Site-agnostic format selector. Falls back to muxed streams where split ones aren't offered."""
     h = HEIGHT_MAP.get(vq)
     hc = f"[height<={h}]" if h else ""
     if mute:
-        # yalnızca görüntü
+        # video only
         return f"bestvideo{hc}/best{hc}/best"
     if container == "mp4":
-        # Önce mp4/m4a uyumlu akışlar, sonra en iyi, sonra birleşik
+        # mp4/m4a-compatible streams first, then best available, then muxed
         return (f"bestvideo{hc}[ext=mp4]+bestaudio[ext=m4a]/"
                 f"bestvideo{hc}+bestaudio/"
                 f"best{hc}/best")
@@ -585,7 +586,7 @@ def build_cmd(data: dict, output_dir: str) -> list:
     is_playlist = bool(data.get("playlist"))
 
     if is_playlist:
-        # Liste adında bir alt klasör oluştur, içine sıralı numarayla indir
+        # Create a subfolder named after the playlist, number the files inside
         out = os.path.join(output_dir,
                            "%(playlist_title|Playlist)s",
                            "%(autonumber)03d - %(title).150B [%(id)s].%(ext)s")
@@ -596,20 +597,20 @@ def build_cmd(data: dict, output_dir: str) -> list:
            "--retries", "10", "--fragment-retries", "10",
            "--concurrent-fragments", "4", "-o", out]
 
-    # Gömülü ffmpeg'i kullan (birleştirme, ses çıkarma, altyazı gömme için gerekli)
+    # Use the bundled ffmpeg (needed for merging, audio extraction, subtitle embedding)
     if FFMPEG_DIR:
         cmd += ["--ffmpeg-location", FFMPEG_DIR]
 
-    # Oynatma listesi: tüm listeyi indir, bozuk bir videoda durma
+    # Playlist: grab the whole list, don't stop on one broken video
     if is_playlist:
         cmd += ["--yes-playlist", "--ignore-errors"]
-        # Mix/radyo listeleri sonsuz olduğundan makul bir sınır koy
+        # Mix/radio lists are endless, so keep a sane cap
         if is_mix_playlist(url):
             cmd += ["--playlist-end", str(MIX_CAP)]
     else:
         cmd.append("--no-playlist")
 
-    # Tarayıcı çerezleri (giriş gerektiren siteler için)
+    # Browser cookies (for sites that require a login)
     cookies = data.get("cookies", "none")
     if cookies and cookies != "none":
         cmd += ["--cookies-from-browser", cookies]
@@ -621,20 +622,21 @@ def build_cmd(data: dict, output_dir: str) -> list:
         fmt  = build_video_format(vq, cont, mute)
         cmd += ["-f", fmt, "--merge-output-format", cont]
         if data.get("subs"):
-            # Altyazı = en iyi çaba. YouTube altyazı uç noktası sık sık HTTP 429
-            # döndürür; --ignore-errors bunun indirmeyi iptal etmesini engeller
-            # (video yine iner). --convert-subs srt daha uyumlu gömme sağlar.
+            # Subtitles are best-effort. YouTube's subtitle endpoint often
+            # returns HTTP 429; --ignore-errors keeps that from aborting the
+            # whole download (the video still lands). --convert-subs srt
+            # embeds more reliably.
             cmd += ["--embed-subs", "--write-auto-subs", "--write-subs",
                     "--sub-langs", "tr,en", "--convert-subs", "srt",
                     "--ignore-errors"]
         cmd.append(url)
         return cmd
 
-    # ── ses modu ──
+    # ── audio mode ──
     afmt = data.get("fmt", "mp3")
     br   = data.get("br", "192k")
     cmd += ["-x", "--audio-format", afmt]
-    # Kayıpsız biçimlerde bitrate anlamsız; yalnızca kayıplılara uygula
+    # Bitrate makes no sense for lossless formats; only apply it to lossy ones
     if afmt not in ("flac", "wav"):
         cmd += ["--audio-quality", "0" if br == "best" else br.upper()]
     cmd.append(url)
@@ -726,7 +728,7 @@ _IS_WINDOWS = sys.platform == "win32"
 
 
 def _default_download_dir() -> str:
-    # Linux/macOS: XDG "İndirilenler" klasörünü kullan (yoksa ~/Downloads)
+    # Linux/macOS: use the XDG downloads folder (else ~/Downloads)
     if not _IS_WINDOWS:
         try:
             out = subprocess.run(["xdg-user-dir", "DOWNLOAD"],
@@ -793,13 +795,13 @@ def history_route():
 
 @app.route("/fonts/<path:name>")
 def fonts_route(name):
-    # Uygulamayla gelen yazı tipleri (internet gerektirmez)
+    # Fonts shipped with the app (no internet needed)
     return send_from_directory(os.path.join(_bin_dir(), "fonts"), name, max_age=31536000)
 
 
 @app.route("/ping")
 def ping_route():
-    # Sayfanın kalp atışı; before_request _last_seen'i de günceller
+    # Heartbeat from the page; before_request also refreshes _last_seen
     cid = request.args.get("id")
     if cid:
         with _clients_lock:
@@ -809,9 +811,9 @@ def ping_route():
 
 @app.route("/bye", methods=["POST", "GET"])
 def bye_route():
-    # Sekme kapanırken sendBeacon ile gelir → hızlı ve temiz çıkış sağlar.
-    # Sayfa yenilemede de tetiklenir ama yeni sayfa hemen yeniden ping atar;
-    # watchdog _EXIT_GRACE beklediği için yenileme uygulamayı kapatmaz.
+    # Sent via sendBeacon as the tab closes — gives a fast, clean exit.
+    # A page reload triggers it too, but the new page pings again right away;
+    # since the watchdog waits _EXIT_GRACE, a reload never kills the app.
     cid = request.args.get("id")
     if cid:
         with _clients_lock:
@@ -819,9 +821,10 @@ def bye_route():
     return jsonify({"ok": True})
 
 
-# ── Kalıcı ayarlar (dil, tema): sunucu tarafında config.json ────────────────
-# localStorage porta bağlıdır: 5000 doluyken 5001'e düşülürse tarayıcı bunu
-# ayrı site sayar ve seçimler kaybolur. Bu yüzden dil/tema sunucuda saklanır.
+# ── Persistent settings (language, theme): server-side config.json ──────────
+# localStorage is tied to the port: when 5000 is busy and we fall back to 5001,
+# the browser treats that as a different site and the choices vanish. So the
+# language/theme picks live on the server instead.
 
 _cfg_lock = threading.Lock()
 
@@ -853,13 +856,13 @@ def _save_config(updates: dict):
             json.dump(cfg, f)
 
 
-# ── Ayarlar: başlangıçta otomatik açılma (Windows: registry, Linux: autostart) ──
+# ── Setting: launch at startup (Windows: registry, Linux: autostart) ─────────
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_NAME = "Aevum"
 
 
 def _launch_target() -> str:
-    # En kalıcı hedef menüye kurulu kopya; sonra $APPIMAGE; sonra frozen exe; sonra dev
+    # Most durable target first: menu-installed copy, then $APPIMAGE, then frozen exe, then dev
     if sys.platform.startswith("linux") and os.path.isfile(_installed_appimage()):
         return f'"{_installed_appimage()}" --startup'
     if os.environ.get("APPIMAGE"):
@@ -900,7 +903,7 @@ def set_startup_enabled(enabled: bool):
                 except FileNotFoundError:
                     pass
         return
-    # ── Linux: ~/.config/autostart/aevum.desktop yaz/sil ──
+    # ── Linux: write/remove ~/.config/autostart/aevum.desktop ──
     path = _linux_autostart_file()
     if enabled:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -922,9 +925,9 @@ def set_startup_enabled(enabled: bool):
             pass
 
 
-# ── Linux: uygulama menüsüne kurulum ("indir, kur, kalsın") ──────────────────
-# AppImage'ı ~/.local/share/aevum/ altına kopyalar, menüye .desktop + ikon yazar;
-# sonrasında terminal gerekmeden menüden normal bir uygulama gibi başlar.
+# ── Linux: install into the app menu ("download, install, done") ─────────────
+# Copies the AppImage under ~/.local/share/aevum/, writes a .desktop entry and
+# an icon into the menu; after that it launches like a regular app, no terminal.
 
 def _xdg_data_home() -> str:
     return os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
@@ -947,7 +950,7 @@ def get_menu_installed() -> bool:
 
 
 def _source_icon() -> str:
-    # 1) PyInstaller paketi  2) AppImage kök dizini ($APPDIR)  3) script yanı
+    # 1) PyInstaller bundle  2) AppImage root ($APPDIR)  3) next to the script
     cands = [os.path.join(_bin_dir(), "aevum.png"),
              os.path.join(os.path.dirname(os.path.abspath(__file__)), "aevum.png")]
     if os.environ.get("APPDIR"):
@@ -959,7 +962,7 @@ def _source_icon() -> str:
 
 
 def _refresh_menu_caches():
-    """Masaüstü ortamının menü/ikon önbelleğini tazele (varsa; hata önemsiz)."""
+    """Refresh the desktop's menu/icon caches (when the tools exist; failures are fine)."""
     for cmd in (["update-desktop-database", os.path.dirname(_menu_desktop_file())],
                 ["gtk-update-icon-cache", "-f", "-t",
                  os.path.join(_xdg_data_home(), "icons", "hicolor")]):
@@ -1025,7 +1028,7 @@ def uninstall_menu_entry() -> None:
         os.rmdir(os.path.dirname(_installed_appimage()))
     except OSError:
         pass
-    # kurulu kopyaya işaret eden autostart girdisi kırık kalmasın
+    # don't leave an autostart entry pointing at the removed copy
     auto = _linux_autostart_file()
     if os.path.isfile(auto):
         try:
@@ -1044,7 +1047,7 @@ def settings_get():
         "startup": get_startup_enabled(),
         "menu": get_menu_installed(),
         "canMenu": sys.platform.startswith("linux"),
-        # Başlangıçta açılma tepsiye oturmayı gerektirir → yalnızca Windows
+        # Launch-at-startup needs a tray to sit in — Windows only
         "canStartup": _IS_WINDOWS,
         "lang": cfg.get("lang", ""),
         "theme": cfg.get("theme", ""),
@@ -1067,7 +1070,7 @@ def settings_set():
             set_startup_enabled(bool(data["startup"]))
         except OSError as e:
             return jsonify({"ok": False, "error": str(e)}), 500
-    # Dil/tema tercihi: porttan bağımsız kalıcılık için sunucuda sakla
+    # Language/theme choice: stored server-side so it survives port changes
     updates = {}
     if isinstance(data.get("lang"), str) and data["lang"]:
         updates["lang"] = data["lang"][:8]
@@ -1077,14 +1080,14 @@ def settings_set():
         try:
             _save_config(updates)
         except OSError:
-            pass  # config yazılamasa da uygulama çalışmaya devam etsin
+            pass  # even if the config can't be written, keep the app running
     return jsonify({"ok": True, "startup": get_startup_enabled(),
                     "menu": get_menu_installed()})
 
 
-# ── Tray ikonu oluştur ───────────────────────────────────────────────────────
+# ── Tray icon ────────────────────────────────────────────────────────────────
 def create_icon_image():
-    """Aevum yörünge ikonu (tepsi): yeşil halka + yıldız + merkez çekirdek"""
+    """Aevum orbit icon (tray): green ring + star + core dot"""
     import math
     S = 64
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -1105,7 +1108,7 @@ def create_icon_image():
 
 
 def _open_url(url: str):
-    """Tarayıcıyı temiz ortamla aç (webbrowser modülü kirli LD_LIBRARY_PATH geçirir)."""
+    """Open the browser with a clean env (the webbrowser module passes the polluted LD_LIBRARY_PATH along)."""
     if sys.platform.startswith("linux"):
         opener = shutil.which("xdg-open")
         if opener:
@@ -1124,7 +1127,7 @@ def open_browser(icon=None, item=None):
 
 
 def quit_app(icon, item):
-    # Kapatırken arka planda çalışan indirmeleri de durdur
+    # Also stop any downloads still running in the background
     with jobs_lock:
         procs = [j.get("proc") for j in jobs.values()]
     for p in procs:
@@ -1153,7 +1156,7 @@ def start_flask():
 
 
 def _shutdown_now():
-    # Çalışan indirme süreçleri varsa (takılı kalmış vb.) onları da kapat
+    # Kill any download processes still around (stuck ones included)
     with jobs_lock:
         procs = [j.get("proc") for j in jobs.values()]
     for p in procs:
@@ -1163,13 +1166,13 @@ def _shutdown_now():
 
 
 def _browser_watchdog():
-    """Linux (tepsisiz mod): son sekme kapanınca uygulamayı kapat.
+    """Linux (no-tray mode): shut the app down once the last tab is gone.
 
-    Sekmeler her 3 sn'de /ping atar ve kapanırken /bye gönderir. Kapanış
-    tespiti: canlı sekme kalmadıysa ve son istekten _EXIT_GRACE geçtiyse çık.
-    /bye kaybolursa (çökme, elektrik) sekme _CLIENT_STALE sonrası ölü sayılır.
-    Aktif bir indirme sürerken asla çıkılmaz — indirme biter, sayfa hâlâ
-    kapalıysa o zaman kapanılır.
+    Tabs ping /ping every 3s and send /bye when closing. We exit when no live
+    tab remains and the last request is older than _EXIT_GRACE. If a /bye gets
+    lost (crash, power cut), the tab counts as dead after _CLIENT_STALE.
+    We never exit while a download is running — it finishes first, and if the
+    page is still gone afterwards, then we quit.
     """
     while True:
         time.sleep(3)
@@ -1185,7 +1188,7 @@ def _browser_watchdog():
             alive = bool(_clients)
         if alive:
             continue
-        # Sayfa hiç bağlanmadıysa (tarayıcı yavaş açılıyor olabilir) uzun bekle
+        # Be patient if no page ever connected (the browser may be slow to open)
         grace = _EXIT_GRACE if _page_seen else _FIRST_GRACE
         if now - _last_seen > grace:
             print("Browser tab closed — shutting down Aevum.", flush=True)
@@ -1194,7 +1197,7 @@ def _browser_watchdog():
 
 def main():
     global PORT
-    # Port meşgulse boş bir port bul (uygulamanın açılmama sorununu önler)
+    # If the port is busy, pick a free one (avoids the app silently not opening)
     PORT = find_free_port(5000)
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
@@ -1203,14 +1206,14 @@ def main():
     url = f"http://localhost:{PORT}"
     print(f"Aevum is running -> {url}", flush=True)
 
-    # ── Linux: tepsisiz mod — tarayıcı açılır, sekme kapanınca uygulama kapanır ──
+    # ── Linux: no-tray mode — browser opens, app exits when the tab closes ──
     if not _IS_WINDOWS:
-        # Eski sürümün "başlangıçta aç" girdisi tepsisiz modda anlamsız; temizle
+        # The old version's launch-at-startup entry makes no sense without a tray; clean it up
         try:
             os.remove(_linux_autostart_file())
         except OSError:
             pass
-        # Menüye kurulu değilse yol göster (AppImage)
+        # Not installed into the menu yet — point the way (AppImage)
         if os.environ.get("APPIMAGE") and not get_menu_installed():
             print("Tip: to install Aevum into your app menu, open Settings > "
                   "'Add to app menu' on the page, or run: "
@@ -1224,8 +1227,8 @@ def main():
             _shutdown_now()
         return
 
-    # ── Windows: tepsi modu ──
-    # --startup ile başlatıldıysa (açılışta otomatik) sayfayı açma, sadece tepside dur
+    # ── Windows: tray mode ──
+    # Started with --startup (login autostart): don't open the page, just sit in the tray
     tray_only = "--startup" in sys.argv or "--tray" in sys.argv
     if not tray_only:
         _open_url(url)
@@ -1242,11 +1245,11 @@ def main():
             icon.run()
             return
         except Exception as e:
-            # Tepsi başlatılamadı — çökme, sunucuyu ayakta tut.
+            # Tray failed to start — don't crash, keep the server up.
             print(f"No tray icon ({e.__class__.__name__}); use the browser page, "
                   f"press Ctrl+C to quit.", flush=True)
 
-    # Tepsisiz mod: sunucuyu ayakta tut ki indirmeler yine çalışsın.
+    # No-tray fallback: keep the server alive so downloads still work.
     if tray_only:
         _open_url(url)
     try:
