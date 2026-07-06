@@ -11,6 +11,7 @@ Downloads video/audio from the ~1800 sites yt-dlp supports.
 """
 
 import os
+import re
 import sys
 import json
 import threading
@@ -182,6 +183,8 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .pf::after{content:'';position:absolute;right:0;top:-2px;width:4px;height:6px;background:rgba(var(--accent),0.95);border-radius:99px;box-shadow:0 0 6px rgba(var(--accent),0.8)}
 .pf::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.4),transparent);transform:translateX(-100%);animation:shimmer 1.5s linear infinite}
 @keyframes shimmer{100%{transform:translateX(100%)}}
+.pf.indet{width:35%!important;animation:indet 1.3s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes indet{0%{margin-left:-35%}100%{margin-left:100%}}
 .prow{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .pt{font-size:9px;color:rgba(var(--accent),0.5);letter-spacing:1.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .stop{display:none;flex-shrink:0;background:rgba(255,80,60,0.1);border:1px solid rgba(255,80,60,0.32);color:rgba(255,120,100,0.95);border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:10px;padding:5px 13px;cursor:pointer;transition:background .2s,transform .12s,box-shadow .2s}
@@ -428,14 +431,14 @@ let jobId=null,pollTimer=null;
 const state={mode:'video',vq:'1080p',cont:'mp4',fmt:'mp3',br:'192k',cookies:'none',subs:false,mute:false,thumb:false,playlist:false};
 // ── i18n strings ──
 const I18N={
- en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download.",appClosed:"⚠ Aevum has quit — relaunch the app to continue.",probeNA:"not available",probeVideos:"videos",probeInPlaylist:"playlist link",clip:"Clip",clipHint:"optional — downloads only this section",thumbnail:"Thumbnail"},
- tr:{urlPlaceholder:"Video bağlantısını yapıştır — her site desteklenir",download:"İndir",mode:"Mod",video:"Video",audio:"Ses",quality:"Kalite",best:"En İyi",container:"Biçim",options:"Seçenek",subtitles:"Altyazı",mute:"Sessiz",format:"Format",bitrate:"Bit Hızı",source:"Kaynak",cookies:"Çerezler",none:"Yok",cookiesHint:"Giriş yapman gereken sitelerden (kendi hesabınla) indirmek için tarayıcının oturumunu kullanır. O tarayıcıyı önce kapat.",playlist:"Liste",downloadPlaylist:"Oynatma Listesini İndir",folder:"Klasör",history:"Geçmiş",stop:"Durdur",connecting:"bağlanıyor...",starting:"başlatılıyor...",downloading:"İndiriliyor",processing:"işleniyor...",completed:"tamamlandı ✓",stopping:"durduruluyor...",stopped:"durduruldu",errorGeneric:"hata oluştu — konsolu kontrol et",connError:"bağlantı hatası",mixWarn:"⚠ YouTube Mix (radyo) listesi sonsuzdur — ilk 50 video indirilecek.",mixInfo:"ℹ Bu bir Mix bağlantısı. Liste kapalı, yalnızca bu video inecek.",appClosed:"⚠ Aevum kapandı — devam etmek için uygulamayı yeniden başlat.",probeNA:"mevcut değil",probeVideos:"video",probeInPlaylist:"liste bağlantısı",clip:"Klip",clipHint:"isteğe bağlı — sadece bu aralığı indirir",thumbnail:"Kapak"},
- es:{urlPlaceholder:"Pega un enlace de vídeo — cualquier sitio funciona",download:"Descargar",mode:"Modo",video:"Vídeo",audio:"Audio",quality:"Calidad",best:"La mejor",container:"Formato",options:"Opciones",subtitles:"Subtítulos",mute:"Silenciar",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Ninguno",cookiesHint:"Usa la sesión de tu navegador para descargar de sitios donde debes iniciar sesión (tu propia cuenta). Cierra ese navegador primero.",playlist:"Lista",downloadPlaylist:"Descargar lista",folder:"Carpeta",history:"Historial",stop:"Detener",connecting:"conectando...",starting:"iniciando...",downloading:"Descargando",processing:"procesando...",completed:"completado ✓",stopping:"deteniendo...",stopped:"detenido",errorGeneric:"ocurrió un error — revisa la consola",connError:"error de conexión",mixWarn:"⚠ La Mix (radio) de YouTube es infinita — solo se descargarán los primeros 50 vídeos.",mixInfo:"ℹ Es un enlace Mix. La lista está desactivada, solo se descargará este vídeo.",appClosed:"⚠ Aevum se ha cerrado — vuelve a abrir la aplicación para continuar.",probeNA:"no disponible",probeVideos:"vídeos",probeInPlaylist:"enlace de lista",clip:"Clip",clipHint:"opcional — descarga solo esta sección",thumbnail:"Miniatura"},
- de:{urlPlaceholder:"Video-Link einfügen — jede Seite funktioniert",download:"Herunterladen",mode:"Modus",video:"Video",audio:"Audio",quality:"Qualität",best:"Beste",container:"Format",options:"Optionen",subtitles:"Untertitel",mute:"Stumm",format:"Format",bitrate:"Bitrate",source:"Quelle",cookies:"Cookies",none:"Keine",cookiesHint:"Nutzt die Sitzung deines Browsers, um von Seiten herunterzuladen, bei denen du angemeldet sein musst (dein eigenes Konto). Schließe diesen Browser zuerst.",playlist:"Playlist",downloadPlaylist:"Playlist herunterladen",folder:"Ordner",history:"Verlauf",stop:"Stopp",connecting:"verbinde...",starting:"starte...",downloading:"Wird geladen",processing:"verarbeite...",completed:"fertig ✓",stopping:"stoppe...",stopped:"gestoppt",errorGeneric:"ein Fehler ist aufgetreten — Konsole prüfen",connError:"Verbindungsfehler",mixWarn:"⚠ YouTube-Mix (Radio) ist endlos — nur die ersten 50 Videos werden geladen.",mixInfo:"ℹ Dies ist ein Mix-Link. Playlist ist aus, nur dieses Video wird geladen.",appClosed:"⚠ Aevum wurde beendet — starte die App neu, um fortzufahren.",probeNA:"nicht verfügbar",probeVideos:"Videos",probeInPlaylist:"Playlist-Link",clip:"Clip",clipHint:"optional — lädt nur diesen Abschnitt",thumbnail:"Vorschaubild"},
- fr:{urlPlaceholder:"Colle un lien vidéo — tous les sites marchent",download:"Télécharger",mode:"Mode",video:"Vidéo",audio:"Audio",quality:"Qualité",best:"Meilleure",container:"Format",options:"Options",subtitles:"Sous-titres",mute:"Muet",format:"Format",bitrate:"Débit",source:"Source",cookies:"Cookies",none:"Aucun",cookiesHint:"Utilise la session de ton navigateur pour télécharger depuis les sites où tu dois être connecté (ton propre compte). Ferme d'abord ce navigateur.",playlist:"Playlist",downloadPlaylist:"Télécharger la playlist",folder:"Dossier",history:"Historique",stop:"Arrêter",connecting:"connexion...",starting:"démarrage...",downloading:"Téléchargement",processing:"traitement...",completed:"terminé ✓",stopping:"arrêt...",stopped:"arrêté",errorGeneric:"une erreur s'est produite — vérifie la console",connError:"erreur de connexion",mixWarn:"⚠ Le Mix (radio) YouTube est infini — seules les 50 premières vidéos seront téléchargées.",mixInfo:"ℹ C'est un lien Mix. La playlist est désactivée, seule cette vidéo sera téléchargée.",appClosed:"⚠ Aevum s'est fermé — relance l'application pour continuer.",probeNA:"non disponible",probeVideos:"vidéos",probeInPlaylist:"lien de playlist",clip:"Clip",clipHint:"optionnel — télécharge seulement cette section",thumbnail:"Miniature"},
- it:{urlPlaceholder:"Incolla un link video — funziona con qualsiasi sito",download:"Scarica",mode:"Modalità",video:"Video",audio:"Audio",quality:"Qualità",best:"Migliore",container:"Formato",options:"Opzioni",subtitles:"Sottotitoli",mute:"Muto",format:"Formato",bitrate:"Bitrate",source:"Originale",cookies:"Cookie",none:"Nessuno",cookiesHint:"Usa la sessione del tuo browser per scaricare dai siti dove devi aver effettuato l'accesso (il tuo account). Chiudi prima quel browser.",playlist:"Playlist",downloadPlaylist:"Scarica playlist",folder:"Cartella",history:"Cronologia",stop:"Ferma",connecting:"connessione...",starting:"avvio...",downloading:"Scaricamento",processing:"elaborazione...",completed:"completato ✓",stopping:"arresto...",stopped:"fermato",errorGeneric:"si è verificato un errore — controlla la console",connError:"errore di connessione",mixWarn:"⚠ Il Mix (radio) di YouTube è infinito — verranno scaricati solo i primi 50 video.",mixInfo:"ℹ Questo è un link Mix. La playlist è disattivata, verrà scaricato solo questo video.",appClosed:"⚠ Aevum si è chiuso — riavvia l'applicazione per continuare.",probeNA:"non disponibile",probeVideos:"video",probeInPlaylist:"link di playlist",clip:"Clip",clipHint:"opzionale — scarica solo questa sezione",thumbnail:"Miniatura"},
- pt:{urlPlaceholder:"Cole um link de vídeo — qualquer site funciona",download:"Baixar",mode:"Modo",video:"Vídeo",audio:"Áudio",quality:"Qualidade",best:"Melhor",container:"Formato",options:"Opções",subtitles:"Legendas",mute:"Mudo",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Nenhum",cookiesHint:"Usa a sessão do seu navegador para baixar de sites onde você precisa estar logado (sua própria conta). Feche esse navegador primeiro.",playlist:"Playlist",downloadPlaylist:"Baixar playlist",folder:"Pasta",history:"Histórico",stop:"Parar",connecting:"conectando...",starting:"iniciando...",downloading:"Baixando",processing:"processando...",completed:"concluído ✓",stopping:"parando...",stopped:"parado",errorGeneric:"ocorreu um erro — verifique o console",connError:"erro de conexão",mixWarn:"⚠ O Mix (rádio) do YouTube é infinito — apenas os primeiros 50 vídeos serão baixados.",mixInfo:"ℹ Este é um link Mix. A playlist está desligada, apenas este vídeo será baixado.",appClosed:"⚠ O Aevum foi encerrado — reabra o aplicativo para continuar.",probeNA:"indisponível",probeVideos:"vídeos",probeInPlaylist:"link de playlist",clip:"Clipe",clipHint:"opcional — baixa só esta seção",thumbnail:"Miniatura"},
- ru:{urlPlaceholder:"Вставьте ссылку на видео — подходит любой сайт",download:"Скачать",mode:"Режим",video:"Видео",audio:"Аудио",quality:"Качество",best:"Лучшее",container:"Формат",options:"Опции",subtitles:"Субтитры",mute:"Без звука",format:"Формат",bitrate:"Битрейт",source:"Источник",cookies:"Cookies",none:"Нет",cookiesHint:"Использует сессию вашего браузера для загрузки с сайтов, где нужен вход (ваш аккаунт). Сначала закройте этот браузер.",playlist:"Плейлист",downloadPlaylist:"Скачать плейлист",folder:"Папка",history:"История",stop:"Стоп",connecting:"подключение...",starting:"запуск...",downloading:"Загрузка",processing:"обработка...",completed:"готово ✓",stopping:"остановка...",stopped:"остановлено",errorGeneric:"произошла ошибка — проверьте консоль",connError:"ошибка соединения",mixWarn:"⚠ YouTube Mix (радио) бесконечен — будут загружены только первые 50 видео.",mixInfo:"ℹ Это ссылка Mix. Плейлист выключен, будет загружено только это видео.",appClosed:"⚠ Aevum завершил работу — перезапустите приложение, чтобы продолжить.",probeNA:"недоступно",probeVideos:"видео",probeInPlaylist:"ссылка плейлиста",clip:"Клип",clipHint:"необязательно — скачает только этот отрезок",thumbnail:"Обложка"}
+ en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download.",appClosed:"⚠ Aevum has quit — relaunch the app to continue.",probeLoading:"loading info…",clipDownloading:"downloading clip…",probeNA:"not available",probeVideos:"videos",probeInPlaylist:"playlist link",clip:"Clip",clipHint:"optional — downloads only this section",thumbnail:"Thumbnail"},
+ tr:{urlPlaceholder:"Video bağlantısını yapıştır — her site desteklenir",download:"İndir",mode:"Mod",video:"Video",audio:"Ses",quality:"Kalite",best:"En İyi",container:"Biçim",options:"Seçenek",subtitles:"Altyazı",mute:"Sessiz",format:"Format",bitrate:"Bit Hızı",source:"Kaynak",cookies:"Çerezler",none:"Yok",cookiesHint:"Giriş yapman gereken sitelerden (kendi hesabınla) indirmek için tarayıcının oturumunu kullanır. O tarayıcıyı önce kapat.",playlist:"Liste",downloadPlaylist:"Oynatma Listesini İndir",folder:"Klasör",history:"Geçmiş",stop:"Durdur",connecting:"bağlanıyor...",starting:"başlatılıyor...",downloading:"İndiriliyor",processing:"işleniyor...",completed:"tamamlandı ✓",stopping:"durduruluyor...",stopped:"durduruldu",errorGeneric:"hata oluştu — konsolu kontrol et",connError:"bağlantı hatası",mixWarn:"⚠ YouTube Mix (radyo) listesi sonsuzdur — ilk 50 video indirilecek.",mixInfo:"ℹ Bu bir Mix bağlantısı. Liste kapalı, yalnızca bu video inecek.",appClosed:"⚠ Aevum kapandı — devam etmek için uygulamayı yeniden başlat.",probeLoading:"bilgi yükleniyor…",clipDownloading:"klip indiriliyor…",probeNA:"mevcut değil",probeVideos:"video",probeInPlaylist:"liste bağlantısı",clip:"Klip",clipHint:"isteğe bağlı — sadece bu aralığı indirir",thumbnail:"Kapak"},
+ es:{urlPlaceholder:"Pega un enlace de vídeo — cualquier sitio funciona",download:"Descargar",mode:"Modo",video:"Vídeo",audio:"Audio",quality:"Calidad",best:"La mejor",container:"Formato",options:"Opciones",subtitles:"Subtítulos",mute:"Silenciar",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Ninguno",cookiesHint:"Usa la sesión de tu navegador para descargar de sitios donde debes iniciar sesión (tu propia cuenta). Cierra ese navegador primero.",playlist:"Lista",downloadPlaylist:"Descargar lista",folder:"Carpeta",history:"Historial",stop:"Detener",connecting:"conectando...",starting:"iniciando...",downloading:"Descargando",processing:"procesando...",completed:"completado ✓",stopping:"deteniendo...",stopped:"detenido",errorGeneric:"ocurrió un error — revisa la consola",connError:"error de conexión",mixWarn:"⚠ La Mix (radio) de YouTube es infinita — solo se descargarán los primeros 50 vídeos.",mixInfo:"ℹ Es un enlace Mix. La lista está desactivada, solo se descargará este vídeo.",appClosed:"⚠ Aevum se ha cerrado — vuelve a abrir la aplicación para continuar.",probeLoading:"cargando info…",clipDownloading:"descargando clip…",probeNA:"no disponible",probeVideos:"vídeos",probeInPlaylist:"enlace de lista",clip:"Clip",clipHint:"opcional — descarga solo esta sección",thumbnail:"Miniatura"},
+ de:{urlPlaceholder:"Video-Link einfügen — jede Seite funktioniert",download:"Herunterladen",mode:"Modus",video:"Video",audio:"Audio",quality:"Qualität",best:"Beste",container:"Format",options:"Optionen",subtitles:"Untertitel",mute:"Stumm",format:"Format",bitrate:"Bitrate",source:"Quelle",cookies:"Cookies",none:"Keine",cookiesHint:"Nutzt die Sitzung deines Browsers, um von Seiten herunterzuladen, bei denen du angemeldet sein musst (dein eigenes Konto). Schließe diesen Browser zuerst.",playlist:"Playlist",downloadPlaylist:"Playlist herunterladen",folder:"Ordner",history:"Verlauf",stop:"Stopp",connecting:"verbinde...",starting:"starte...",downloading:"Wird geladen",processing:"verarbeite...",completed:"fertig ✓",stopping:"stoppe...",stopped:"gestoppt",errorGeneric:"ein Fehler ist aufgetreten — Konsole prüfen",connError:"Verbindungsfehler",mixWarn:"⚠ YouTube-Mix (Radio) ist endlos — nur die ersten 50 Videos werden geladen.",mixInfo:"ℹ Dies ist ein Mix-Link. Playlist ist aus, nur dieses Video wird geladen.",appClosed:"⚠ Aevum wurde beendet — starte die App neu, um fortzufahren.",probeLoading:"Infos werden geladen…",clipDownloading:"Clip wird geladen…",probeNA:"nicht verfügbar",probeVideos:"Videos",probeInPlaylist:"Playlist-Link",clip:"Clip",clipHint:"optional — lädt nur diesen Abschnitt",thumbnail:"Vorschaubild"},
+ fr:{urlPlaceholder:"Colle un lien vidéo — tous les sites marchent",download:"Télécharger",mode:"Mode",video:"Vidéo",audio:"Audio",quality:"Qualité",best:"Meilleure",container:"Format",options:"Options",subtitles:"Sous-titres",mute:"Muet",format:"Format",bitrate:"Débit",source:"Source",cookies:"Cookies",none:"Aucun",cookiesHint:"Utilise la session de ton navigateur pour télécharger depuis les sites où tu dois être connecté (ton propre compte). Ferme d'abord ce navigateur.",playlist:"Playlist",downloadPlaylist:"Télécharger la playlist",folder:"Dossier",history:"Historique",stop:"Arrêter",connecting:"connexion...",starting:"démarrage...",downloading:"Téléchargement",processing:"traitement...",completed:"terminé ✓",stopping:"arrêt...",stopped:"arrêté",errorGeneric:"une erreur s'est produite — vérifie la console",connError:"erreur de connexion",mixWarn:"⚠ Le Mix (radio) YouTube est infini — seules les 50 premières vidéos seront téléchargées.",mixInfo:"ℹ C'est un lien Mix. La playlist est désactivée, seule cette vidéo sera téléchargée.",appClosed:"⚠ Aevum s'est fermé — relance l'application pour continuer.",probeLoading:"chargement…",clipDownloading:"téléchargement du clip…",probeNA:"non disponible",probeVideos:"vidéos",probeInPlaylist:"lien de playlist",clip:"Clip",clipHint:"optionnel — télécharge seulement cette section",thumbnail:"Miniature"},
+ it:{urlPlaceholder:"Incolla un link video — funziona con qualsiasi sito",download:"Scarica",mode:"Modalità",video:"Video",audio:"Audio",quality:"Qualità",best:"Migliore",container:"Formato",options:"Opzioni",subtitles:"Sottotitoli",mute:"Muto",format:"Formato",bitrate:"Bitrate",source:"Originale",cookies:"Cookie",none:"Nessuno",cookiesHint:"Usa la sessione del tuo browser per scaricare dai siti dove devi aver effettuato l'accesso (il tuo account). Chiudi prima quel browser.",playlist:"Playlist",downloadPlaylist:"Scarica playlist",folder:"Cartella",history:"Cronologia",stop:"Ferma",connecting:"connessione...",starting:"avvio...",downloading:"Scaricamento",processing:"elaborazione...",completed:"completato ✓",stopping:"arresto...",stopped:"fermato",errorGeneric:"si è verificato un errore — controlla la console",connError:"errore di connessione",mixWarn:"⚠ Il Mix (radio) di YouTube è infinito — verranno scaricati solo i primi 50 video.",mixInfo:"ℹ Questo è un link Mix. La playlist è disattivata, verrà scaricato solo questo video.",appClosed:"⚠ Aevum si è chiuso — riavvia l'applicazione per continuare.",probeLoading:"caricamento…",clipDownloading:"download della clip…",probeNA:"non disponibile",probeVideos:"video",probeInPlaylist:"link di playlist",clip:"Clip",clipHint:"opzionale — scarica solo questa sezione",thumbnail:"Miniatura"},
+ pt:{urlPlaceholder:"Cole um link de vídeo — qualquer site funciona",download:"Baixar",mode:"Modo",video:"Vídeo",audio:"Áudio",quality:"Qualidade",best:"Melhor",container:"Formato",options:"Opções",subtitles:"Legendas",mute:"Mudo",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Nenhum",cookiesHint:"Usa a sessão do seu navegador para baixar de sites onde você precisa estar logado (sua própria conta). Feche esse navegador primeiro.",playlist:"Playlist",downloadPlaylist:"Baixar playlist",folder:"Pasta",history:"Histórico",stop:"Parar",connecting:"conectando...",starting:"iniciando...",downloading:"Baixando",processing:"processando...",completed:"concluído ✓",stopping:"parando...",stopped:"parado",errorGeneric:"ocorreu um erro — verifique o console",connError:"erro de conexão",mixWarn:"⚠ O Mix (rádio) do YouTube é infinito — apenas os primeiros 50 vídeos serão baixados.",mixInfo:"ℹ Este é um link Mix. A playlist está desligada, apenas este vídeo será baixado.",appClosed:"⚠ O Aevum foi encerrado — reabra o aplicativo para continuar.",probeLoading:"carregando…",clipDownloading:"baixando clipe…",probeNA:"indisponível",probeVideos:"vídeos",probeInPlaylist:"link de playlist",clip:"Clipe",clipHint:"opcional — baixa só esta seção",thumbnail:"Miniatura"},
+ ru:{urlPlaceholder:"Вставьте ссылку на видео — подходит любой сайт",download:"Скачать",mode:"Режим",video:"Видео",audio:"Аудио",quality:"Качество",best:"Лучшее",container:"Формат",options:"Опции",subtitles:"Субтитры",mute:"Без звука",format:"Формат",bitrate:"Битрейт",source:"Источник",cookies:"Cookies",none:"Нет",cookiesHint:"Использует сессию вашего браузера для загрузки с сайтов, где нужен вход (ваш аккаунт). Сначала закройте этот браузер.",playlist:"Плейлист",downloadPlaylist:"Скачать плейлист",folder:"Папка",history:"История",stop:"Стоп",connecting:"подключение...",starting:"запуск...",downloading:"Загрузка",processing:"обработка...",completed:"готово ✓",stopping:"остановка...",stopped:"остановлено",errorGeneric:"произошла ошибка — проверьте консоль",connError:"ошибка соединения",mixWarn:"⚠ YouTube Mix (радио) бесконечен — будут загружены только первые 50 видео.",mixInfo:"ℹ Это ссылка Mix. Плейлист выключен, будет загружено только это видео.",appClosed:"⚠ Aevum завершил работу — перезапустите приложение, чтобы продолжить.",probeLoading:"загрузка…",clipDownloading:"загрузка клипа…",probeNA:"недоступно",probeVideos:"видео",probeInPlaylist:"ссылка плейлиста",clip:"Клип",clipHint:"необязательно — скачает только этот отрезок",thumbnail:"Обложка"}
 };
 const LANGS=[['en','English'],['tr','Türkçe'],['es','Español'],['de','Deutsch'],['fr','Français'],['it','Italiano'],['pt','Português'],['ru','Русский']];
 const langMenu=document.getElementById('langMenu'),langCode=document.getElementById('langCode'),langbox=document.getElementById('langbox');
@@ -448,7 +451,7 @@ function selectLang(l){applyLang(l);saveCfg({lang:l});closeLangMenu();}
 function toggleLangMenu(e){e.stopPropagation();langMenu.classList.toggle('open');}
 function closeLangMenu(){langMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(langbox&&!langbox.contains(e.target))closeLangMenu();});
-function statusText(d){const tag=d.item?'['+d.item+'] ':'';switch(d.code){case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%';case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed');case 'stopped':return T('stopped');case 'error':return d.error_line?d.error_line.slice(0,110):T('errorGeneric');default:return '';}}
+function statusText(d){const tag=d.item?'['+d.item+'] ':'';switch(d.code){case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%';case 'clip':return (d.progress>0?T('downloading')+' '+d.progress+'%':T('clipDownloading'));case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed');case 'stopped':return T('stopped');case 'error':return d.error_line?d.error_line.slice(0,110):T('errorGeneric');default:return '';}}
 // ── themes (accent color) ──
 const THEME_LIST=[['green','0,230,160'],['blue','96,165,250'],['purple','167,139,250'],['dynamic',null]];
 const THEME_NAMES={en:{green:'Green',blue:'Blue',purple:'Purple',dynamic:'Dynamic'},tr:{green:'Yeşil',blue:'Mavi',purple:'Mor',dynamic:'Değişken'},es:{green:'Verde',blue:'Azul',purple:'Púrpura',dynamic:'Dinámico'},de:{green:'Grün',blue:'Blau',purple:'Lila',dynamic:'Dynamisch'},fr:{green:'Vert',blue:'Bleu',purple:'Violet',dynamic:'Dynamique'},it:{green:'Verde',blue:'Blu',purple:'Viola',dynamic:'Dinamico'},pt:{green:'Verde',blue:'Azul',purple:'Roxo',dynamic:'Dinâmico'},ru:{green:'Зелёный',blue:'Синий',purple:'Фиолетовый',dynamic:'Динамический'}};
@@ -561,10 +564,17 @@ function setQualityStates(q){
 }
 function runProbe(url){
   const myProbe=++probeSeq;
+  // Show the card immediately in a loading state — the metadata itself
+  // takes a couple of seconds, so at least the UI reacts instantly
+  pthumb.style.display='none';
+  ptitle.textContent=T('probeLoading');
+  pmeta.textContent='';
+  pcard.classList.add('show');
   fetch('/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})})
     .then(r=>r.ok?r.json():null)
     .then(d=>{
-      if(myProbe!==probeSeq||!d||d.error)return;
+      if(myProbe!==probeSeq)return;
+      if(!d||d.error){hideCard();return;}
       if(d.kind==='playlist'){
         pthumb.style.display='none';
         ptitle.textContent=d.title||T('playlist');
@@ -590,7 +600,7 @@ inp.addEventListener('input',()=>{
   hideCard();
   if(probeTimer)clearTimeout(probeTimer);
   const url=inp.value.trim();
-  // Only probe things that plausibly are URLs; 600ms debounce so we
+  // Only probe things that plausibly are URLs; short debounce so we
   // don't probe every keystroke of a hand-typed address.
   // (No backslashes here: this JS lives inside a Python string literal,
   //  where escapes like a backslash-slash would be invalid sequences.)
@@ -598,7 +608,7 @@ inp.addEventListener('input',()=>{
   const dot=url.indexOf('.');
   const bareHost=!hasProto&&dot>0&&dot<url.length-1&&url.indexOf(' ')===-1&&url.indexOf('/')>0;
   if(hasProto||bareHost){
-    probeTimer=setTimeout(()=>runProbe(url),600);
+    probeTimer=setTimeout(()=>runProbe(url),350);
   }
 });
 inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!gb.disabled)go();});
@@ -608,7 +618,13 @@ function toggleFlag(key,btn){state[key]=!state[key];btn.classList.toggle('tog-on
 function setMode(m){const vr=document.getElementById('vrows'),ar=document.getElementById('arows');if(m==='audio'){requestAnimationFrame(()=>{vr.classList.add('hide');vr.style.maxHeight='0'});ar.classList.remove('hide');ar.style.maxHeight='200px';ar.style.opacity='1';}else{requestAnimationFrame(()=>{ar.classList.add('hide');ar.style.maxHeight='0'});vr.classList.remove('hide');vr.style.maxHeight='240px';vr.style.opacity='1';}}
 function go(){const url=inp.value.trim();if(!url||gb.disabled)return;const dir=document.getElementById('dir').value.trim();const clipStart=document.getElementById('clipStart').value.trim();const clipEnd=document.getElementById('clipEnd').value.trim();gb.disabled=true;pw.classList.add('show');stopbtn.classList.add('show');pf.style.width='5%';pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';fetch('/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,...state,dir,clipStart,clipEnd})}).then(r=>r.json()).then(d=>{jobId=d.job_id;poll();}).catch(()=>{gb.disabled=false;stopbtn.classList.remove('show');pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';});}
 function cancelJob(){if(!jobId)return;stopbtn.classList.remove('show');pt.textContent=T('stopping');pt.style.color='rgba(255,150,90,0.9)';fetch('/cancel/'+jobId,{method:'POST'});}
-function poll(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(()=>{fetch('/status/'+jobId).then(r=>r.json()).then(d=>{if(d.progress!==undefined)pf.style.width=d.progress+'%';pt.textContent=statusText(d);if(!d.done)pt.style.color=(d.code==='process')?'rgba(var(--accent),0.6)':'rgba(var(--accent),0.5)';if(d.done){clearInterval(pollTimer);gb.disabled=false;stopbtn.classList.remove('show');if(d.success){pf.style.width='100%';pt.style.color='rgba(var(--accent),0.7)';}else if(d.code==='stopped'){pf.style.width='0%';pt.style.color='rgba(255,150,90,0.9)';}else{pt.style.color='rgba(255,100,80,0.8)';}loadHistory();}}).catch(()=>{});},700);}
+function poll(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(()=>{fetch('/status/'+jobId).then(r=>r.json()).then(d=>{
+  // Clip downloads run silently through ffmpeg (no percent). Show an
+  // indeterminate animated bar until real progress (or completion) arrives.
+  const indet=(d.code==='clip'&&(!d.progress||d.progress<=0)&&!d.done);
+  pf.classList.toggle('indet',indet);
+  if(d.progress!==undefined&&!indet)pf.style.width=d.progress+'%';
+  pt.textContent=statusText(d);if(!d.done)pt.style.color=(d.code==='process')?'rgba(var(--accent),0.6)':'rgba(var(--accent),0.5)';if(d.done){pf.classList.remove('indet');clearInterval(pollTimer);gb.disabled=false;stopbtn.classList.remove('show');if(d.success){pf.style.width='100%';pt.style.color='rgba(var(--accent),0.7)';}else if(d.code==='stopped'){pf.style.width='0%';pt.style.color='rgba(255,150,90,0.9)';}else{pt.style.color='rgba(255,100,80,0.8)';}loadHistory();}}).catch(()=>{});},700);}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function loadHistory(){fetch('/history').then(r=>r.json()).then(items=>{if(!items.length)return;document.getElementById('hist-wrap').style.display='block';document.getElementById('hist-list').innerHTML=items.map(h=>`<div class="hist-item"><span class="hist-url">${esc(h.url)}</span><span class="hist-meta">${esc(h.meta)}</span><span class="${h.success?'hist-ok':'hist-err'}">${h.success?'✓':'✗'}</span></div>`).join('');}).catch(()=>{});}
 applyTheme(curTheme);
@@ -665,30 +681,41 @@ def kill_process_tree(pid: int):
         pass
 
 
-def build_video_format(vq: str, container: str, mute: bool) -> str:
-    """Site-agnostic format selector. Falls back to muxed streams where split ones aren't offered."""
+def build_video_format(vq: str, container: str, mute: bool, prefer_progressive: bool = False) -> str:
+    """Site-agnostic format selector. Falls back to muxed streams where split ones aren't offered.
+
+    prefer_progressive: for CLIP downloads, put a single pre-muxed stream
+    first. Split video+audio streams force yt-dlp through ffmpeg to seek the
+    section, which is very slow; a progressive file downloads by byte-range
+    in seconds. If no progressive stream exists at the requested height, the
+    normal split selectors below still apply.
+    """
     h = HEIGHT_MAP.get(vq)
     hc = f"[height<={h}]" if h else ""
     if mute:
         # video only
         return f"bestvideo{hc}/best{hc}/best"
+    progressive = f"best{hc}[vcodec!=none][acodec!=none]/" if prefer_progressive else ""
     if container == "mp4":
         # mp4/m4a-compatible streams first, then best available, then muxed
-        return (f"bestvideo{hc}[ext=mp4]+bestaudio[ext=m4a]/"
+        return (progressive +
+                f"bestvideo{hc}[ext=mp4]+bestaudio[ext=m4a]/"
                 f"bestvideo{hc}+bestaudio/"
                 f"best{hc}/best")
     if container == "mp4h264":
         # True H.264 (avc1) preference — plain "mp4" can hide AV1 at high
         # resolutions, which many editors refuse to open
-        return (f"bestvideo{hc}[vcodec^=avc1]+bestaudio[ext=m4a]/"
+        return (progressive +
+                f"bestvideo{hc}[vcodec^=avc1]+bestaudio[ext=m4a]/"
                 f"bestvideo{hc}[ext=mp4]+bestaudio[ext=m4a]/"
                 f"best{hc}/best")
     if container == "webm":
         # user preference: VP9 quality; webm-native streams first
-        return (f"bestvideo{hc}[ext=webm]+bestaudio[ext=webm]/"
+        return (progressive +
+                f"bestvideo{hc}[ext=webm]+bestaudio[ext=webm]/"
                 f"bestvideo{hc}[vcodec^=vp9]+bestaudio/"
                 f"best{hc}/best")
-    return f"bestvideo{hc}+bestaudio/best{hc}/best"
+    return progressive + f"bestvideo{hc}+bestaudio/best{hc}/best"
 
 
 def _parse_timestamp(text: str):
@@ -709,12 +736,19 @@ def build_cmd(data: dict, output_dir: str) -> list:
     url  = data["url"]
     mode = data.get("mode", "video")
     is_playlist = bool(data.get("playlist"))
+    want_thumb = bool(data.get("thumb"))
 
     if is_playlist:
         # Create a subfolder named after the playlist, number the files inside
         out = os.path.join(output_dir,
                            "%(playlist_title|Playlist)s",
                            "%(autonumber)03d - %(title).150B [%(id)s].%(ext)s")
+    elif want_thumb:
+        # Thumbnail selected: give this download its own folder so the video
+        # and its cover image don't clutter the main folder alongside others
+        out = os.path.join(output_dir,
+                           "%(title).150B [%(id)s]",
+                           "%(title).150B [%(id)s].%(ext)s")
     else:
         out = os.path.join(output_dir, "%(title).180B [%(id)s].%(ext)s")
 
@@ -741,11 +775,16 @@ def build_cmd(data: dict, output_dir: str) -> list:
         cmd += ["--cookies-from-browser", cookies]
 
     # Save the video's thumbnail alongside the download (as jpg)
-    if data.get("thumb"):
+    if want_thumb:
         cmd += ["--write-thumbnail", "--convert-thumbnails", "jpg"]
 
     # Clip: download only a section (for grabbing short scenes to edit).
     # Invalid/empty fields simply mean "no bound on that side".
+    # NOTE: we do NOT use --force-keyframes-at-cuts. That flag re-encodes
+    # the whole section (minutes of CPU on a long clip) and, while it runs,
+    # yt-dlp emits no [download] percentage — the UI froze at 0%. Plain
+    # --download-sections does a fast keyframe-accurate stream copy, which
+    # is exactly right for grabbing scenes and reports progress normally.
     clip_start = _parse_timestamp(data.get("clipStart", ""))
     clip_end   = _parse_timestamp(data.get("clipEnd", ""))
     if clip_end is not None and clip_start is not None and clip_end <= clip_start:
@@ -753,14 +792,16 @@ def build_cmd(data: dict, output_dir: str) -> list:
     if clip_start is not None or clip_end is not None:
         section = "*%s-%s" % (clip_start or 0,
                               clip_end if clip_end is not None else "inf")
-        # keyframe cuts make the clip start exactly where asked
-        cmd += ["--download-sections", section, "--force-keyframes-at-cuts"]
+        cmd += ["--download-sections", section]
 
     if mode == "video":
         vq   = data.get("vq", "1080p")
         cont = data.get("cont", "mp4")
         mute = bool(data.get("mute", False))
-        fmt  = build_video_format(vq, cont, mute)
+        # A clip prefers a progressive stream — split streams make yt-dlp
+        # seek the section through ffmpeg, which is dramatically slower
+        is_clip_dl = clip_start is not None or clip_end is not None
+        fmt  = build_video_format(vq, cont, mute, prefer_progressive=is_clip_dl)
         # UI values -> real container names (mp4h264 is an mp4 on disk)
         merge_container = {"mp4h264": "mp4"}.get(cont, cont)
         cmd += ["-f", fmt, "--merge-output-format", merge_container]
@@ -798,10 +839,32 @@ def history_meta(data: dict) -> str:
     return f"{data.get('fmt','')} {data.get('br','')}".strip()
 
 
+_FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+def _clip_duration_seconds(data: dict):
+    """Length of the requested clip in seconds, or None if not a bounded clip."""
+    start = _parse_timestamp(data.get("clipStart", ""))
+    end = _parse_timestamp(data.get("clipEnd", ""))
+    if end is not None and start is not None and end > start:
+        return end - start
+    if end is not None and (start is None or start == 0):
+        return end
+    return None
+
+
 def run_job(job_id: str, data: dict, output_dir: str):
     cmd = build_cmd(data, output_dir)
+    clip_dur = _clip_duration_seconds(data)
+    # A section download runs through ffmpeg, which stays SILENT (no percent
+    # lines) for the whole transfer. Mark the job so the UI shows an
+    # indeterminate "downloading clip" state instead of a frozen 0%.
+    is_clip = (_parse_timestamp(data.get("clipStart", "")) is not None or
+               _parse_timestamp(data.get("clipEnd", "")) is not None)
     with jobs_lock:
         jobs[job_id]["lines"].append("$ " + " ".join(cmd))
+        if is_clip:
+            jobs[job_id]["code"] = "clip"
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", bufsize=1,
@@ -812,7 +875,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
                                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
         with jobs_lock:
             jobs[job_id]["proc"] = proc
-        progress, code, item = 0, "download", ""
+        progress, code, item = 0, ("clip" if is_clip else "download"), ""
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
@@ -834,6 +897,19 @@ def run_job(job_id: str, data: dict, output_dir: str):
             elif any(x in line for x in ["[Merger]", "[VideoConvertor]", "[ExtractAudio]",
                                           "[EmbedSubtitle]", "[Metadata]", "[FixupM"]):
                 progress, code = 94, "process"
+            elif "time=" in line and code != "process":
+                # Section/clip downloads can run through ffmpeg, which reports
+                # elapsed "time=HH:MM:SS" instead of a percentage. Convert it
+                # against the clip length so the bar moves instead of freezing.
+                m = _FFMPEG_TIME_RE.search(line)
+                if m:
+                    elapsed = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                    if clip_dur and clip_dur > 0:
+                        progress = min(int(elapsed / clip_dur * 100), 99)
+                    else:
+                        # Unknown length: at least prove it's working (creep up)
+                        progress = min(progress + 1, 95)
+                    code = "download"
             with jobs_lock:
                 jobs[job_id]["lines"].append(line)
                 jobs[job_id]["progress"] = progress
@@ -1013,7 +1089,8 @@ def probe_route():
 
     if is_pure_playlist:
         # Cheap flat pass: titles only, no per-video format scan
-        info = _run_probe_json([YTDLP, "-J", "--flat-playlist", "--no-warnings", url],
+        info = _run_probe_json([YTDLP, "-J", "--flat-playlist", "--no-warnings",
+                                "--socket-timeout", "15", url],
                                timeout=20)
         if not info:
             return jsonify({"error": "probe failed"}), 502
@@ -1025,7 +1102,8 @@ def probe_route():
         _probe_cache_put(url, summary)
         return jsonify(summary)
 
-    info = _run_probe_json([YTDLP, "-J", "--no-playlist", "--no-warnings", url])
+    info = _run_probe_json([YTDLP, "-J", "--no-playlist", "--no-warnings",
+                            "--socket-timeout", "15", url])
     if not info:
         return jsonify({"error": "probe failed"}), 502
     summary = _summarize_video_info(info, in_playlist=bool(pid))
