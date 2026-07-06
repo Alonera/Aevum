@@ -745,12 +745,159 @@ def _default_download_dir() -> str:
     return str(Path.home() / "Downloads")
 
 
+# ── Probe: fetch metadata without downloading (preview card) ─────────────────
+# Design rule: the probe NEVER blocks anything. It runs in the request
+# thread, one at a time — a newer probe or a starting download kills the
+# in-flight one, because preview data is advisory and must not compete
+# with an actual download for bandwidth or CPU.
+
+_probe_proc_lock = threading.Lock()
+_probe_proc = None
+_probe_cache = {}          # url -> summary dict (bounded, insertion-ordered)
+_PROBE_CACHE_MAX = 10
+
+# UI quality buckets, ascending (a format of height H belongs to the
+# smallest bucket >= H; heights above 2160 are ignored as exotic)
+_QUALITY_BUCKETS = [360, 480, 720, 1080, 1440, 2160]
+
+
+def _kill_current_probe():
+    global _probe_proc
+    with _probe_proc_lock:
+        proc = _probe_proc
+        _probe_proc = None
+    if proc and proc.poll() is None:
+        kill_process_tree(proc.pid)
+
+
+def _run_probe_json(args, timeout=25):
+    """Run yt-dlp and parse its single-line JSON output (None on failure)."""
+    global _probe_proc
+    _kill_current_probe()
+    try:
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, encoding="utf-8", errors="replace",
+                                env=_clean_env(),
+                                # own group on POSIX so killpg can't hit Aevum
+                                start_new_session=sys.platform != "win32",
+                                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+    except OSError:
+        return None
+    with _probe_proc_lock:
+        _probe_proc = proc
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_process_tree(proc.pid)
+        return None
+    finally:
+        with _probe_proc_lock:
+            if _probe_proc is proc:
+                _probe_proc = None
+    if proc.returncode != 0 or not out:
+        return None
+    try:
+        return json.loads(out)
+    except ValueError:
+        return None
+
+
+def _summarize_video_info(info, in_playlist: bool) -> dict:
+    """Boil a yt-dlp -J dump down to what the preview card needs."""
+    best_audio = 0
+    best_in_bucket = {}    # bucket -> {"size": int, "approx": bool}
+
+    for f in info.get("formats") or []:
+        size = f.get("filesize") or f.get("filesize_approx") or 0
+        approx = not f.get("filesize")
+        vcodec = f.get("vcodec")
+        acodec = f.get("acodec")
+        height = f.get("height")
+
+        if vcodec and vcodec != "none" and height:
+            prev = 0
+            for bucket in _QUALITY_BUCKETS:
+                if prev < height <= bucket:
+                    cur = best_in_bucket.get(bucket)
+                    if cur is None or size > cur["size"]:
+                        best_in_bucket[bucket] = {"size": size, "approx": approx}
+                    break
+                prev = bucket
+        elif (not vcodec or vcodec == "none") and acodec and acodec != "none":
+            if size > best_audio:
+                best_audio = size
+
+    qualities = {}
+    for bucket in _QUALITY_BUCKETS:
+        entry = best_in_bucket.get(bucket)
+        if entry:
+            total = (entry["size"] + best_audio) if entry["size"] else 0
+            qualities[str(bucket)] = {"ok": True, "size": total,
+                                      "approx": entry["approx"] or not total}
+        else:
+            qualities[str(bucket)] = {"ok": False, "size": 0, "approx": True}
+
+    return {
+        "kind": "video",
+        "title": (info.get("title") or "")[:200],
+        "uploader": (info.get("uploader") or info.get("channel") or "")[:100],
+        "duration": int(info.get("duration") or 0),
+        "thumbnail": info.get("thumbnail") or "",
+        "qualities": qualities,
+        "inPlaylist": in_playlist,
+    }
+
+
+def _probe_cache_put(url: str, summary: dict):
+    if len(_probe_cache) >= _PROBE_CACHE_MAX:
+        _probe_cache.pop(next(iter(_probe_cache)))
+    _probe_cache[url] = summary
+
+
+@app.route("/probe", methods=["POST"])
+def probe_route():
+    data = request.json or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "empty URL"}), 400
+
+    cached = _probe_cache.get(url)
+    if cached:
+        return jsonify(cached)
+
+    pid = playlist_id(url)
+    is_pure_playlist = ("/playlist" in url) or (pid and "v=" not in url)
+
+    if is_pure_playlist:
+        # Cheap flat pass: titles only, no per-video format scan
+        info = _run_probe_json([YTDLP, "-J", "--flat-playlist", "--no-warnings", url],
+                               timeout=20)
+        if not info:
+            return jsonify({"error": "probe failed"}), 502
+        summary = {
+            "kind": "playlist",
+            "title": (info.get("title") or "")[:200],
+            "count": int(info.get("playlist_count") or len(info.get("entries") or [])),
+        }
+        _probe_cache_put(url, summary)
+        return jsonify(summary)
+
+    info = _run_probe_json([YTDLP, "-J", "--no-playlist", "--no-warnings", url])
+    if not info:
+        return jsonify({"error": "probe failed"}), 502
+    summary = _summarize_video_info(info, in_playlist=bool(pid))
+    _probe_cache_put(url, summary)
+    return jsonify(summary)
+
+
 @app.route("/download", methods=["POST"])
 def download_route():
     data = request.json or {}
     url  = data.get("url", "").strip()
     if not url:
         return jsonify({"error": "empty URL"}), 400
+    # A real download outranks preview metadata — free the bandwidth
+    _kill_current_probe()
     raw_dir    = data.get("dir", "").strip()
     output_dir = str(Path(raw_dir).expanduser()) if raw_dir else _default_download_dir()
     Path(output_dir).mkdir(parents=True, exist_ok=True)
