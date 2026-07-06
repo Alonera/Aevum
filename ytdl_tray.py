@@ -780,11 +780,11 @@ def build_cmd(data: dict, output_dir: str) -> list:
 
     # Clip: download only a section (for grabbing short scenes to edit).
     # Invalid/empty fields simply mean "no bound on that side".
-    # NOTE: we do NOT use --force-keyframes-at-cuts. That flag re-encodes
-    # the whole section (minutes of CPU on a long clip) and, while it runs,
-    # yt-dlp emits no [download] percentage — the UI froze at 0%. Plain
-    # --download-sections does a fast keyframe-accurate stream copy, which
-    # is exactly right for grabbing scenes and reports progress normally.
+    # NOTE: we do NOT use --force-keyframes-at-cuts — it re-encodes the whole
+    # section (minutes of CPU on a long clip). Even plain --download-sections
+    # runs through ffmpeg for SPLIT streams and stays silent (no percent), so
+    # the video branch prefers a progressive stream for clips (fast byte-range
+    # download) and run_job shows an indeterminate bar for the silent case.
     clip_start = _parse_timestamp(data.get("clipStart", ""))
     clip_end   = _parse_timestamp(data.get("clipEnd", ""))
     if clip_end is not None and clip_start is not None and clip_end <= clip_start:
