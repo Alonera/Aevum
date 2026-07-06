@@ -695,27 +695,35 @@ def build_video_format(vq: str, container: str, mute: bool, prefer_progressive: 
     if mute:
         # video only
         return f"bestvideo{hc}/best{hc}/best"
-    progressive = f"best{hc}[vcodec!=none][acodec!=none]/" if prefer_progressive else ""
+    # Progressive prefix must match the target container's codec family — a
+    # progressive H.264/mp4 stream cannot be remuxed into webm (invalid), so
+    # webm asks for a progressive webm (rare → falls through to split VP9).
+    def _prog(ext):
+        if not prefer_progressive:
+            return ""
+        cond = f"[ext={ext}]" if ext else ""
+        return f"best{hc}{cond}[vcodec!=none][acodec!=none]/"
+
     if container == "mp4":
         # mp4/m4a-compatible streams first, then best available, then muxed
-        return (progressive +
+        return (_prog("mp4") +
                 f"bestvideo{hc}[ext=mp4]+bestaudio[ext=m4a]/"
                 f"bestvideo{hc}+bestaudio/"
                 f"best{hc}/best")
     if container == "mp4h264":
         # True H.264 (avc1) preference — plain "mp4" can hide AV1 at high
         # resolutions, which many editors refuse to open
-        return (progressive +
+        return (_prog("mp4") +
                 f"bestvideo{hc}[vcodec^=avc1]+bestaudio[ext=m4a]/"
                 f"bestvideo{hc}[ext=mp4]+bestaudio[ext=m4a]/"
                 f"best{hc}/best")
     if container == "webm":
         # user preference: VP9 quality; webm-native streams first
-        return (progressive +
+        return (_prog("webm") +
                 f"bestvideo{hc}[ext=webm]+bestaudio[ext=webm]/"
                 f"bestvideo{hc}[vcodec^=vp9]+bestaudio/"
                 f"best{hc}/best")
-    return progressive + f"bestvideo{hc}+bestaudio/best{hc}/best"
+    return _prog("") + f"bestvideo{hc}+bestaudio/best{hc}/best"
 
 
 def _parse_timestamp(text: str):
@@ -792,7 +800,14 @@ def build_cmd(data: dict, output_dir: str) -> list:
     if clip_start is not None or clip_end is not None:
         section = "*%s-%s" % (clip_start or 0,
                               clip_end if clip_end is not None else "inf")
-        cmd += ["--download-sections", section]
+        # --force-keyframes-at-cuts makes the cut EXACT. Without it, sections
+        # snap to the nearest keyframe: a 0:05-0:15 clip came out 0:00-0:15
+        # on split/VP9 streams, and audio kept the whole downloaded segment.
+        # Accuracy is the whole point of a clip, so we always force it; the
+        # re-encode is cheap for short clips (the common case) and its ffmpeg
+        # "time=" output drives the progress bar (see run_job), so long clips
+        # show real progress instead of a frozen 0%.
+        cmd += ["--download-sections", section, "--force-keyframes-at-cuts"]
 
     if mode == "video":
         vq   = data.get("vq", "1080p")
