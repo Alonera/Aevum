@@ -251,8 +251,8 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .theme-opt .nm{flex:1}
 .theme-opt.active .nm::after{content:'✓';margin-left:6px;opacity:.7}
 .info-panel{width:320px}
-.info-panel.open{max-height:460px}
-.info-list{overflow-y:auto;max-height:375px;padding-right:5px}
+.info-panel.open{max-height:min(460px,calc(100vh - 90px))}
+.info-list{overflow-y:auto;max-height:min(375px,calc(100vh - 175px));padding-right:5px}
 .info-list::-webkit-scrollbar{width:4px}
 .info-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:4px}
 .info-item{font-size:10.5px;color:rgba(255,255,255,0.45);line-height:1.6;margin-bottom:9px}
