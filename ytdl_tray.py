@@ -242,7 +242,7 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .theme-toggle:active{transform:scale(0.96)}
 .theme-swatch{width:15px;height:15px;border-radius:50%;background:rgb(var(--accent));box-shadow:0 0 8px -1px rgba(var(--accent),0.7);transition:background .3s ease}
 .theme-menu{position:absolute;left:0;bottom:calc(100% + 8px);background:rgba(14,14,18,0.97);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:6px;min-width:150px;overflow:hidden;opacity:0;max-height:0;transform:translateY(8px) scale(0.97);transform-origin:bottom left;pointer-events:none;transition:opacity .2s ease,transform .22s cubic-bezier(.2,.9,.3,1.25),max-height .25s ease;box-shadow:0 16px 40px -12px rgba(0,0,0,0.85)}
-.theme-menu.open{opacity:1;max-height:260px;transform:translateY(0) scale(1);pointer-events:auto}
+.theme-menu.open{opacity:1;max-height:420px;transform:translateY(0) scale(1);pointer-events:auto}
 .theme-opt{display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:none;border-radius:7px;color:rgba(255,255,255,0.62);font-family:inherit;font-size:11px;text-align:left;padding:8px 10px;cursor:pointer;transition:background .15s,color .15s}
 .theme-opt:hover{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.95)}
 .theme-opt.active{color:rgba(255,255,255,0.95)}
@@ -487,18 +487,28 @@ function toggleInfo(e){e.stopPropagation();infoPanel.classList.toggle('open');}
 function closeInfo(){infoPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(infobox&&!infobox.contains(e.target))closeInfo();});
 // ── themes (accent color) ──
-const THEME_LIST=[['green','0,230,160'],['blue','96,165,250'],['purple','167,139,250'],['dynamic',null]];
-const THEME_NAMES={en:{green:'Green',blue:'Blue',purple:'Purple',dynamic:'Dynamic'},tr:{green:'Yeşil',blue:'Mavi',purple:'Mor',dynamic:'Değişken'},es:{green:'Verde',blue:'Azul',purple:'Púrpura',dynamic:'Dinámico'},de:{green:'Grün',blue:'Blau',purple:'Lila',dynamic:'Dynamisch'},fr:{green:'Vert',blue:'Bleu',purple:'Violet',dynamic:'Dynamique'},it:{green:'Verde',blue:'Blu',purple:'Viola',dynamic:'Dinamico'},pt:{green:'Verde',blue:'Azul',purple:'Roxo',dynamic:'Dinâmico'},ru:{green:'Зелёный',blue:'Синий',purple:'Фиолетовый',dynamic:'Динамический'}};
+const THEME_LIST=[['green','0,230,160'],['blue','96,165,250'],['purple','167,139,250'],['teal','45,212,191'],['amber','251,191,36'],['crimson','248,113,113'],['mono','226,232,240'],['dynamic',null],['calm',null]];
+const THEME_NAMES={
+ en:{green:'Green',blue:'Blue',purple:'Purple',teal:'Teal',amber:'Amber',crimson:'Crimson',mono:'Mono',dynamic:'Dynamic',calm:'Calm'},
+ tr:{green:'Yeşil',blue:'Mavi',purple:'Mor',teal:'Turkuaz',amber:'Kehribar',crimson:'Kızıl',mono:'Mono',dynamic:'Değişken',calm:'Sakin'},
+ es:{green:'Verde',blue:'Azul',purple:'Púrpura',teal:'Turquesa',amber:'Ámbar',crimson:'Carmesí',mono:'Mono',dynamic:'Dinámico',calm:'Calma'},
+ de:{green:'Grün',blue:'Blau',purple:'Lila',teal:'Türkis',amber:'Bernstein',crimson:'Karmesin',mono:'Mono',dynamic:'Dynamisch',calm:'Ruhig'},
+ fr:{green:'Vert',blue:'Bleu',purple:'Violet',teal:'Turquoise',amber:'Ambre',crimson:'Carmin',mono:'Mono',dynamic:'Dynamique',calm:'Calme'},
+ it:{green:'Verde',blue:'Blu',purple:'Viola',teal:'Turchese',amber:'Ambra',crimson:'Cremisi',mono:'Mono',dynamic:'Dinamico',calm:'Calmo'},
+ pt:{green:'Verde',blue:'Azul',purple:'Roxo',teal:'Turquesa',amber:'Âmbar',crimson:'Carmesim',mono:'Mono',dynamic:'Dinâmico',calm:'Calmo'},
+ ru:{green:'Зелёный',blue:'Синий',purple:'Фиолетовый',teal:'Бирюзовый',amber:'Янтарный',crimson:'Багровый',mono:'Моно',dynamic:'Динамический',calm:'Спокойный'}};
 function TT(id){const L=THEME_NAMES[curLang]||THEME_NAMES.en;return L[id]||THEME_NAMES.en[id]||id;}
 const themeMenu=document.getElementById('themeMenu'),themebox=document.getElementById('themebox');
 let accentRGB='0,230,160';
 let curTheme=localStorage.getItem('aevum_theme')||'green';
-let dynamicActive=false,dynHue=155;
+// Two cycling modes share the hue loop: 'dynamic' makes a full lap in ~2
+// minutes, 'calm' drifts through it in ~20 — alive, but easy on the eyes.
+let dynamicActive=false,dynHue=155,dynSpeed=0.05;
 function rgbToHue(r,g,b){r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;let h=0;if(d){if(mx===r)h=((g-b)/d)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360;}return h;}
 function setAccent(rgb){accentRGB=rgb;const ds=document.documentElement.style;ds.setProperty('--accent',rgb);const p=rgb.split(','),h=rgbToHue(+p[0],+p[1],+p[2]);ds.setProperty('--aura1',hslToRgb(((h-60+360)%360)/360,0.72,0.55));ds.setProperty('--aura2',hslToRgb(h/360,0.72,0.55));ds.setProperty('--aura3',hslToRgb(((h+60)%360)/360,0.72,0.55));}
 function hslToRgb(h,s,l){let r,g,b;if(s===0){r=g=b=l;}else{const f=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;r=f(p,q,h+1/3);g=f(p,q,h);b=f(p,q,h-1/3);}return Math.round(r*255)+','+Math.round(g*255)+','+Math.round(b*255);}
-function applyTheme(t){if(!THEME_LIST.some(x=>x[0]===t))t='green';curTheme=t;localStorage.setItem('aevum_theme',t);dynamicActive=(t==='dynamic');if(!dynamicActive){setAccent(THEME_LIST.find(x=>x[0]===t)[1]);}buildThemeMenu();}
-function buildThemeMenu(){themeMenu.innerHTML=THEME_LIST.map(([id,rgb])=>{const dot=rgb?('background:rgb('+rgb+')'):('background:conic-gradient(from 0deg,#ff5b5b,#ffd93b,#4be08a,#4aa3ff,#a77bff,#ff5b5b)');return '<button class="theme-opt'+(id===curTheme?' active':'')+'" onclick="selectTheme(\\''+id+'\\')"><span class="dot" style="'+dot+'"></span><span class="nm">'+TT(id)+'</span></button>';}).join('');}
+function applyTheme(t){if(!THEME_LIST.some(x=>x[0]===t))t='green';curTheme=t;localStorage.setItem('aevum_theme',t);dynamicActive=(t==='dynamic'||t==='calm');dynSpeed=(t==='calm')?0.005:0.05;if(!dynamicActive){setAccent(THEME_LIST.find(x=>x[0]===t)[1]);}buildThemeMenu();}
+function buildThemeMenu(){themeMenu.innerHTML=THEME_LIST.map(([id,rgb])=>{const dot=rgb?('background:rgb('+rgb+')'):(id==='calm'?'background:conic-gradient(from 0deg,#c9a1a1,#c9c3a1,#a1c9b1,#a1b5c9,#b6a1c9,#c9a1a1)':'background:conic-gradient(from 0deg,#ff5b5b,#ffd93b,#4be08a,#4aa3ff,#a77bff,#ff5b5b)');return '<button class="theme-opt'+(id===curTheme?' active':'')+'" onclick="selectTheme(\\''+id+'\\')"><span class="dot" style="'+dot+'"></span><span class="nm">'+TT(id)+'</span></button>';}).join('');}
 function selectTheme(t){applyTheme(t);saveCfg({theme:t});closeThemeMenu();}
 function toggleThemeMenu(e){e.stopPropagation();themeMenu.classList.toggle('open');}
 function closeThemeMenu(){themeMenu.classList.remove('open');}
@@ -558,7 +568,7 @@ function frame(now){
   requestAnimationFrame(frame);
   if(document.hidden){last=now;return;}
   let dt=(now-last)/16.667;last=now;if(dt>3)dt=3;else if(dt<0)dt=0;
-  if(dynamicActive){dynHue=(dynHue+0.05*dt)%360;setAccent(hslToRgb(dynHue/360,0.55,0.62));}
+  if(dynamicActive){dynHue=(dynHue+dynSpeed*dt)%360;setAccent(hslToRgb(dynHue/360,0.55,0.62));}
   applyTilt();
   const mx=ptr.inside?ptr.x*scale:-99999,my=ptr.inside?ptr.y*scale:-99999;
   for(const p of parts){p.x+=p.vx*dt;p.y+=p.vy*dt;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1;const dx=p.x-mx,dy=p.y-my,d2=dx*dx+dy*dy;if(d2<REP2){const d=Math.sqrt(d2)||1,f=(REP-d)/REP*1.1*dt;p.x+=dx/d*f;p.y+=dy/d*f;}}
