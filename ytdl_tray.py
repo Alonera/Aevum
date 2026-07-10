@@ -250,6 +250,14 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .theme-opt.active .dot{box-shadow:0 0 0 2px rgba(255,255,255,0.25)}
 .theme-opt .nm{flex:1}
 .theme-opt.active .nm::after{content:'✓';margin-left:6px;opacity:.7}
+.info-panel{width:320px}
+.info-panel.open{max-height:460px}
+.info-list{overflow-y:auto;max-height:375px;padding-right:5px}
+.info-list::-webkit-scrollbar{width:4px}
+.info-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:4px}
+.info-item{font-size:10.5px;color:rgba(255,255,255,0.45);line-height:1.6;margin-bottom:9px}
+.info-item:last-child{margin-bottom:0}
+.info-item b{color:rgba(255,255,255,0.85);font-weight:600}
 @keyframes fsd{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.13)}100%{transform:scale(1)}}
 .pop{animation:pop .18s ease}
@@ -391,6 +399,15 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
   </div>
 </div>
 <div class="br-controls">
+  <div class="settingsbox" id="infobox">
+    <div class="settings-panel info-panel" id="infoPanel">
+      <div class="settings-title" id="infoTitle">Guide</div>
+      <div class="info-list" id="infoList"></div>
+    </div>
+    <button class="lang-toggle" id="infoToggle" onclick="toggleInfo(event)" aria-label="Guide">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4.5M12 8h.01"/></svg>
+    </button>
+  </div>
   <div class="settingsbox" id="settingsbox">
     <div class="settings-panel" id="settingsPanel">
       <div class="settings-title" id="settingsTitle">Settings</div>
@@ -447,12 +464,28 @@ let curLang=localStorage.getItem('vdl_lang')||'en';
 function T(k){const L=I18N[curLang]||I18N.en;return L[k]!==undefined?L[k]:(I18N.en[k]!==undefined?I18N.en[k]:k);}
 function renderTexts(){document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=T(el.dataset.i18n);});document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.placeholder=T(el.dataset.i18nPh);});document.querySelectorAll('[data-i18n-title]').forEach(el=>{el.title=T(el.dataset.i18nTitle);});}
 function buildLangMenu(){langMenu.innerHTML=LANGS.map(([c,n])=>'<button class="lang-opt'+(c===curLang?' active':'')+'" data-lang="'+c+'" onclick="selectLang(\\''+c+'\\')"><span>'+n+'</span><span class="lc">'+c.toUpperCase()+'</span></button>').join('');}
-function applyLang(l){curLang=l;localStorage.setItem('vdl_lang',l);document.documentElement.lang=l;langCode.textContent=l.toUpperCase();renderTexts();updateNote();buildLangMenu();buildThemeMenu();renderSettings();}
+function applyLang(l){curLang=l;localStorage.setItem('vdl_lang',l);document.documentElement.lang=l;langCode.textContent=l.toUpperCase();renderTexts();updateNote();buildLangMenu();buildThemeMenu();renderSettings();renderInfo();}
 function selectLang(l){applyLang(l);saveCfg({lang:l});closeLangMenu();}
 function toggleLangMenu(e){e.stopPropagation();langMenu.classList.toggle('open');}
 function closeLangMenu(){langMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(langbox&&!langbox.contains(e.target))closeLangMenu();});
 function statusText(d){const tag=d.item?'['+d.item+'] ':'';const spd=d.speed?' · '+d.speed+' MB/s':'';switch(d.code){case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%'+spd;case 'clip':return (d.progress>0?T('downloading')+' '+d.progress+'%'+spd:T('clipDownloading'));case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed')+(d.subswarn?' — '+T('subsSkipped'):'');case 'stopped':return T('stopped');case 'error':return d.error_line?d.error_line.slice(0,110):T('errorGeneric');default:return '';}}
+// ── info / guide panel ──
+const INFO_TEXT={
+ en:{title:'Guide',items:[['Video / Audio','download the full video, or just its sound (e.g. MP3).'],['Quality','best stream up to that height. Dimmed = not offered for this video; hover shows the size.'],['MP4','plays everywhere — the safe default.'],['MKV','flexible container, good for archiving.'],['H.264','an MP4 guaranteed to be H.264 — best for editors and older devices.'],['WebM','VP9 — best quality per megabyte.'],['Subtitles',"embeds the uploader's TR/EN subtitles into the file (auto captions are never used)."],['Mute','video only, no audio track.'],['Thumbnail','saves the cover as jpg next to the video, in their own folder.'],['Cookies','use your browser login for members-only content (your own account).'],['Playlist','downloads the whole list into a numbered folder.'],['Clip','downloads only the chosen range — frame-exact, at full speed.'],['Lossless cut','no re-encode: original quality, but the clip may start a few seconds early.']]},
+ tr:{title:'Rehber',items:[['Video / Ses','videonun tamamını ya da yalnız sesini (örn. MP3) indirir.'],['Kalite','o yüksekliğe kadarki en iyi akışı seçer. Soluk = bu videoda yok; üzerine gelince boyut görünür.'],['MP4','her yerde oynar — güvenli varsayılan.'],['MKV','esnek kapsayıcı, arşiv için iyi.'],['H.264','H.264 garantili MP4 — kurgu programları ve eski cihazlar için en iyisi.'],['WebM','VP9 — megabayt başına en iyi kalite.'],['Altyazı','yükleyicinin TR/EN altyazısını dosyaya gömer (otomatik altyazı kullanılmaz).'],['Sessiz','yalnız görüntü, ses izi yok.'],['Kapak','kapak görselini jpg olarak videonun yanına, kendi klasörüne kaydeder.'],['Çerezler','üyelere özel içerik için tarayıcı oturumunu kullanır (kendi hesabın).'],['Liste','tüm oynatma listesini numaralı bir klasöre indirir.'],['Klip','yalnız seçtiğin aralığı indirir — kare hassasiyetinde ve tam hızda.'],['Kayıpsız kesim','yeniden kodlama yok: orijinal kalite, ama klip birkaç saniye erken başlayabilir.']]},
+ es:{title:'Guía',items:[['Vídeo / Audio','descarga el vídeo completo o solo su sonido (p. ej. MP3).'],['Calidad','el mejor stream hasta esa altura. Atenuado = no disponible; al pasar el cursor se ve el tamaño.'],['MP4','se reproduce en todas partes — la opción segura.'],['MKV','contenedor flexible, bueno para archivar.'],['H.264','un MP4 garantizado H.264 — ideal para editores y dispositivos antiguos.'],['WebM','VP9 — la mejor calidad por megabyte.'],['Subtítulos','incrusta los subtítulos TR/EN del autor (nunca los automáticos).'],['Silenciar','solo imagen, sin pista de audio.'],['Miniatura','guarda la portada como jpg junto al vídeo, en su propia carpeta.'],['Cookies','usa tu sesión del navegador para contenido de miembros (tu propia cuenta).'],['Lista','descarga toda la lista en una carpeta numerada.'],['Clip','descarga solo el rango elegido — exacto al fotograma y a toda velocidad.'],['Corte sin pérdida','sin recodificar: calidad original, pero el clip puede empezar unos segundos antes.']]},
+ de:{title:'Anleitung',items:[['Video / Audio','lädt das ganze Video oder nur den Ton (z. B. MP3).'],['Qualität','bester Stream bis zu dieser Höhe. Abgeblendet = nicht verfügbar; Hover zeigt die Größe.'],['MP4','läuft überall — die sichere Wahl.'],['MKV','flexibler Container, gut zum Archivieren.'],['H.264','ein garantiert H.264-MP4 — ideal für Schnittprogramme und ältere Geräte.'],['WebM','VP9 — beste Qualität pro Megabyte.'],['Untertitel','bettet die TR/EN-Untertitel des Uploaders ein (nie automatische).'],['Stumm','nur Bild, keine Tonspur.'],['Vorschaubild','speichert das Cover als jpg neben dem Video, in eigenem Ordner.'],['Cookies','nutzt deinen Browser-Login für Mitgliederinhalte (eigenes Konto).'],['Playlist','lädt die ganze Liste in einen nummerierten Ordner.'],['Clip','lädt nur den gewählten Abschnitt — bildgenau, in voller Geschwindigkeit.'],['Verlustfreier Schnitt','keine Neukodierung: Originalqualität, der Clip kann aber ein paar Sekunden früher beginnen.']]},
+ fr:{title:'Guide',items:[['Vidéo / Audio','télécharge la vidéo entière ou seulement le son (ex. MP3).'],['Qualité','meilleur flux jusqu\\'à cette hauteur. Grisé = indisponible ; le survol montre la taille.'],['MP4','se lit partout — le choix sûr.'],['MKV','conteneur flexible, bon pour l\\'archivage.'],['H.264','un MP4 garanti H.264 — idéal pour le montage et les vieux appareils.'],['WebM','VP9 — la meilleure qualité par mégaoctet.'],['Sous-titres','incruste les sous-titres TR/EN de l\\'auteur (jamais les automatiques).'],['Muet','image seule, sans piste audio.'],['Miniature','enregistre la jaquette en jpg à côté de la vidéo, dans leur dossier.'],['Cookies','utilise ta session navigateur pour le contenu réservé (ton propre compte).'],['Playlist','télécharge toute la liste dans un dossier numéroté.'],['Clip','télécharge seulement la plage choisie — précis à l\\'image, à pleine vitesse.'],['Coupe sans perte','pas de réencodage : qualité d\\'origine, mais le clip peut commencer quelques secondes plus tôt.']]},
+ it:{title:'Guida',items:[['Video / Audio','scarica il video intero o solo l\\'audio (es. MP3).'],['Qualità','il miglior stream fino a quell\\'altezza. Attenuato = non disponibile; al passaggio mostra la dimensione.'],['MP4','si riproduce ovunque — la scelta sicura.'],['MKV','contenitore flessibile, buono per archiviare.'],['H.264','un MP4 garantito H.264 — ideale per editor e dispositivi datati.'],['WebM','VP9 — la migliore qualità per megabyte.'],['Sottotitoli','incorpora i sottotitoli TR/EN dell\\'autore (mai quelli automatici).'],['Muto','solo immagine, nessuna traccia audio.'],['Miniatura','salva la copertina come jpg accanto al video, in una cartella dedicata.'],['Cookie','usa il login del browser per contenuti riservati (il tuo account).'],['Playlist','scarica l\\'intera lista in una cartella numerata.'],['Clip','scarica solo l\\'intervallo scelto — preciso al fotogramma, a piena velocità.'],['Taglio senza perdita','nessuna ricodifica: qualità originale, ma la clip può iniziare qualche secondo prima.']]},
+ pt:{title:'Guia',items:[['Vídeo / Áudio','baixa o vídeo inteiro ou só o som (ex. MP3).'],['Qualidade','o melhor stream até essa altura. Esmaecido = indisponível; passar o mouse mostra o tamanho.'],['MP4','toca em qualquer lugar — a escolha segura.'],['MKV','contêiner flexível, bom para arquivar.'],['H.264','um MP4 garantidamente H.264 — ideal para editores e aparelhos antigos.'],['WebM','VP9 — a melhor qualidade por megabyte.'],['Legendas','incorpora as legendas TR/EN do autor (nunca as automáticas).'],['Mudo','só imagem, sem faixa de áudio.'],['Miniatura','salva a capa como jpg ao lado do vídeo, em pasta própria.'],['Cookies','usa o login do navegador para conteúdo de membros (sua própria conta).'],['Playlist','baixa a lista inteira numa pasta numerada.'],['Clipe','baixa só o trecho escolhido — preciso ao quadro, em velocidade total.'],['Corte sem perdas','sem recodificação: qualidade original, mas o clipe pode começar alguns segundos antes.']]},
+ ru:{title:'Справка',items:[['Видео / Аудио','скачивает всё видео или только звук (напр. MP3).'],['Качество','лучший поток до этой высоты. Тусклый = недоступно; при наведении виден размер.'],['MP4','играет везде — надёжный выбор.'],['MKV','гибкий контейнер, хорош для архива.'],['H.264','MP4 с гарантированным H.264 — лучше всего для монтажа и старых устройств.'],['WebM','VP9 — лучшее качество на мегабайт.'],['Субтитры','встраивает субтитры автора TR/EN (автоматические не используются).'],['Без звука','только изображение, без звуковой дорожки.'],['Обложка','сохраняет обложку в jpg рядом с видео, в отдельной папке.'],['Cookies','использует вход в браузере для контента по подписке (ваш аккаунт).'],['Плейлист','скачивает весь список в нумерованную папку.'],['Клип','скачивает только выбранный отрезок — точно до кадра, на полной скорости.'],['Без перекодирования','оригинальное качество, но клип может начаться на несколько секунд раньше.']]}
+};
+const infoPanel=document.getElementById('infoPanel'),infobox=document.getElementById('infobox');
+function renderInfo(){const L=INFO_TEXT[curLang]||INFO_TEXT.en;document.getElementById('infoTitle').textContent=L.title;document.getElementById('infoList').innerHTML=L.items.map(([b,t])=>'<div class="info-item"><b>'+b+'</b> — '+t+'</div>').join('');}
+function toggleInfo(e){e.stopPropagation();infoPanel.classList.toggle('open');}
+function closeInfo(){infoPanel.classList.remove('open');}
+document.addEventListener('click',e=>{if(infobox&&!infobox.contains(e.target))closeInfo();});
 // ── themes (accent color) ──
 const THEME_LIST=[['green','0,230,160'],['blue','96,165,250'],['purple','167,139,250'],['dynamic',null]];
 const THEME_NAMES={en:{green:'Green',blue:'Blue',purple:'Purple',dynamic:'Dynamic'},tr:{green:'Yeşil',blue:'Mavi',purple:'Mor',dynamic:'Değişken'},es:{green:'Verde',blue:'Azul',purple:'Púrpura',dynamic:'Dinámico'},de:{green:'Grün',blue:'Blau',purple:'Lila',dynamic:'Dynamisch'},fr:{green:'Vert',blue:'Bleu',purple:'Violet',dynamic:'Dynamique'},it:{green:'Verde',blue:'Blu',purple:'Viola',dynamic:'Dinamico'},pt:{green:'Verde',blue:'Azul',purple:'Roxo',dynamic:'Dinâmico'},ru:{green:'Зелёный',blue:'Синий',purple:'Фиолетовый',dynamic:'Динамический'}};
@@ -601,6 +634,11 @@ inp.addEventListener('paste',()=>{justPasted=true;});
 inp.addEventListener('input',()=>{
   gb.disabled=!inp.value.trim();updateNote();
   hideCard();
+  // A new link means a new video — yesterday's clip range would silently
+  // cut the wrong section, so the clip fields reset. Other options stay:
+  // the user may well want the same quality/format for several videos.
+  document.getElementById('clipStart').value='';
+  document.getElementById('clipEnd').value='';
   if(probeTimer)clearTimeout(probeTimer);
   const url=inp.value.trim();
   // Only probe things that plausibly are URLs. A pasted link probes right
@@ -875,6 +913,9 @@ def history_meta(data: dict) -> str:
 
 _FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
 _DL_SPEED_RE = re.compile(r"at\s+([\d.]+)(K|M|G)iB/s")
+# ffmpeg progress lines carry no rate, but their growing size= lets us
+# compute one (clip downloads run through ffmpeg, not yt-dlp's reporter)
+_FF_SIZE_RE = re.compile(r"size=\s*(\d+)(KiB|kB)")
 
 
 def _clip_duration_seconds(data: dict):
@@ -913,6 +954,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
         progress, code, item = 0, ("clip" if is_clip else "download"), ""
         want_subs = bool(data.get("subs")) and data.get("mode", "video") == "video"
         subs_embedded = False
+        ff_last_bytes, ff_last_t = None, 0.0
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
@@ -956,6 +998,22 @@ def run_job(job_id: str, data: dict, output_dir: str):
                         # Unknown length: at least prove it's working (creep up)
                         progress = min(progress + 1, 95)
                     code = "download"
+                # Rate from the growth of size= between progress lines.
+                # A ~3s window smooths ffmpeg's bursty writes, and a zero
+                # rate never overwrites the last real one (brief stalls
+                # would otherwise make the number flicker 0.0/1.8/0.0).
+                msz = _FF_SIZE_RE.search(line)
+                if msz:
+                    cur = int(msz.group(1)) * (1024 if msz.group(2) == "KiB" else 1000)
+                    now = time.monotonic()
+                    if ff_last_bytes is None or cur < ff_last_bytes:
+                        ff_last_bytes, ff_last_t = cur, now
+                    elif now - ff_last_t >= 3.0:
+                        rate = (cur - ff_last_bytes) / (now - ff_last_t) / 1e6
+                        if rate >= 0.05:
+                            with jobs_lock:
+                                jobs[job_id]["speed"] = f"{rate:.1f}"
+                        ff_last_bytes, ff_last_t = cur, now
             with jobs_lock:
                 jobs[job_id]["lines"].append(line)
                 jobs[job_id]["progress"] = progress
