@@ -620,7 +620,10 @@ inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!gb.disabled)go();});
 function updateNote(){const mix=/[?&]list=RD/i.test(inp.value);note.textContent=(mix&&state.playlist)?T('mixWarn'):(mix&&!state.playlist)?T('mixInfo'):'';}
 function pick(btn){const g=btn.dataset.g;state[g]=btn.dataset.v;document.querySelectorAll('[data-g="'+g+'"]').forEach(b=>b.classList.remove('on','mode-on'));btn.classList.add(g==='mode'?'mode-on':'on');btn.classList.remove('pop');void btn.offsetWidth;btn.classList.add('pop');}
 function toggleFlag(key,btn){state[key]=!state[key];btn.classList.toggle('tog-on',state[key]);btn.classList.remove('pop');void btn.offsetWidth;btn.classList.add('pop');if(key==='playlist')updateNote();}
-function setMode(m){const vr=document.getElementById('vrows'),ar=document.getElementById('arows');if(m==='audio'){requestAnimationFrame(()=>{vr.classList.add('hide');vr.style.maxHeight='0'});ar.classList.remove('hide');ar.style.maxHeight='200px';ar.style.opacity='1';}else{requestAnimationFrame(()=>{ar.classList.add('hide');ar.style.maxHeight='0'});vr.classList.remove('hide');vr.style.maxHeight='240px';vr.style.opacity='1';}}
+function setMode(m){const vr=document.getElementById('vrows'),ar=document.getElementById('arows');if(m==='audio'){requestAnimationFrame(()=>{vr.classList.add('hide');vr.style.maxHeight='0'});ar.classList.remove('hide');ar.style.maxHeight='200px';ar.style.opacity='1';}else{requestAnimationFrame(()=>{ar.classList.add('hide');ar.style.maxHeight='0'});vr.classList.remove('hide');vr.style.maxHeight='240px';vr.style.opacity='1';}
+  // Audio clips are always cut exactly (re-encode is free there), so the
+  // lossless toggle would be a dead control — hide it in audio mode
+  document.getElementById('clipllbtn').style.display=(m==='audio')?'none':'';}
 function go(){const url=inp.value.trim();if(!url||gb.disabled)return;const dir=document.getElementById('dir').value.trim();const clipStart=document.getElementById('clipStart').value.trim();const clipEnd=document.getElementById('clipEnd').value.trim();gb.disabled=true;pw.classList.add('show');stopbtn.classList.add('show');pf.style.width='5%';pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';fetch('/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,...state,dir,clipStart,clipEnd})}).then(r=>r.json()).then(d=>{jobId=d.job_id;poll();}).catch(()=>{gb.disabled=false;stopbtn.classList.remove('show');pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';});}
 function cancelJob(){if(!jobId)return;stopbtn.classList.remove('show');pt.textContent=T('stopping');pt.style.color='rgba(255,150,90,0.9)';fetch('/cancel/'+jobId,{method:'POST'});}
 function poll(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(()=>{fetch('/status/'+jobId).then(r=>r.json()).then(d=>{
@@ -854,6 +857,8 @@ def build_cmd(data: dict, output_dir: str) -> list:
 
 
 def history_meta(data: dict) -> str:
+    is_clip = (_parse_timestamp(data.get("clipStart", "")) is not None or
+               _parse_timestamp(data.get("clipEnd", "")) is not None)
     if data.get("mode") == "video":
         cont_label = {"mp4h264": "mp4·h264"}.get(data.get("cont", ""), data.get("cont", ""))
         parts = [data.get("vq", ""), cont_label]
@@ -861,8 +866,11 @@ def history_meta(data: dict) -> str:
             parts.append("muted")
         if data.get("subs"):
             parts.append("subs")
+        if is_clip:
+            parts.append("clip")
         return " ".join(p for p in parts if p)
-    return f"{data.get('fmt','')} {data.get('br','')}".strip()
+    meta = f"{data.get('fmt','')} {data.get('br','')}".strip()
+    return meta + (" clip" if is_clip else "")
 
 
 _FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
@@ -1544,7 +1552,8 @@ def open_browser(icon=None, item=None):
 
 
 def quit_app(icon, item):
-    # Also stop any downloads still running in the background
+    # Also stop any downloads (and a preview probe) still running
+    _kill_current_probe()
     with jobs_lock:
         procs = [j.get("proc") for j in jobs.values()]
     for p in procs:
@@ -1574,6 +1583,7 @@ def start_flask():
 
 def _shutdown_now():
     # Kill any download processes still around (stuck ones included)
+    _kill_current_probe()
     with jobs_lock:
         procs = [j.get("proc") for j in jobs.values()]
     for p in procs:
@@ -1633,7 +1643,8 @@ def main():
     existing = _find_running_instance()
     if existing:
         print(f"Aevum already running -> {existing}", flush=True)
-        if "--startup" not in sys.argv:
+        # Silent launches (login autostart / tray-only) shouldn't pop a tab
+        if "--startup" not in sys.argv and "--tray" not in sys.argv:
             _open_url(existing)
         return
     # If the port is busy, pick a free one (avoids the app silently not opening)
