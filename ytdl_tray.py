@@ -1592,6 +1592,11 @@ def main():
 
     url = f"http://localhost:{PORT}"
     print(f"Aevum is running -> {url}", flush=True)
+    # Say which binaries were resolved. When running from source without a
+    # bin\ folder the lookup silently falls back to PATH, and a PATH ffmpeg
+    # of the wrong version once masqueraded as a clip bug (research-clip.md).
+    print(f"using yt-dlp: {YTDLP}", flush=True)
+    print(f"using ffmpeg: {os.path.join(FFMPEG_DIR, 'ffmpeg') if FFMPEG_DIR else 'from PATH'}", flush=True)
 
     # ── Linux: no-tray mode — browser opens, app exits when the tab closes ──
     if not _IS_WINDOWS:
