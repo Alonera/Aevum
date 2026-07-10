@@ -2,6 +2,9 @@
 REM Build Aevum: portable exe (Portable\) + installer (Setup\)
 REM Requirements: pip install flask pystray pillow pyinstaller  +  Inno Setup (ISCC on PATH)
 REM Place yt-dlp.exe and ffmpeg.exe into the bin\ folder first.
+REM ffmpeg: use 8.0 essentials (gyan.dev). Do NOT bundle 8.1.x - its HTTP
+REM range requests hang forever on googlevideo, which breaks clip downloads
+REM (yt-dlp issue #16546). 8.0 and 7.x are fine.
 
 cd /d "%~dp0"
 
