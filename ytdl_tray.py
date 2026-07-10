@@ -828,12 +828,15 @@ def build_cmd(data: dict, output_dir: str) -> list:
             # Subtitles are best-effort. YouTube's subtitle endpoint often
             # returns HTTP 429; --ignore-errors keeps that from aborting the
             # whole download (the video still lands, run_job flags the skip).
+            # Uploader-provided subtitles ONLY — auto captions are noise the
+            # user explicitly does not want, so --write-auto-subs stays out.
+            # The wildcard still catches regional variants (en-GB etc.).
             # The subtitle format must match the container — webm only takes
             # WebVTT (srt embeds used to fail silently there) — and
             # no-keep-subs drops the sidecar file once the embed succeeds.
             sub_fmt = "vtt" if merge_container == "webm" else "srt"
-            cmd += ["--embed-subs", "--write-auto-subs", "--write-subs",
-                    "--sub-langs", "tr,en,tr-orig,en-orig,tr-en,en-en",
+            cmd += ["--embed-subs", "--write-subs",
+                    "--sub-langs", "tr.*,en.*",
                     "--convert-subs", sub_fmt,
                     "--compat-options", "no-keep-subs", "--ignore-errors"]
         cmd.append(url)
@@ -900,6 +903,8 @@ def run_job(job_id: str, data: dict, output_dir: str):
         with jobs_lock:
             jobs[job_id]["proc"] = proc
         progress, code, item = 0, ("clip" if is_clip else "download"), ""
+        want_subs = bool(data.get("subs")) and data.get("mode", "video") == "video"
+        subs_embedded = False
         for line in proc.stdout:
             line = line.rstrip()
             if not line:
@@ -923,12 +928,11 @@ def run_job(job_id: str, data: dict, output_dir: str):
                     val = float(ms.group(1)) * {"K": 1024, "M": 1024**2, "G": 1024**3}[ms.group(2)]
                     with jobs_lock:
                         jobs[job_id]["speed"] = f"{val / 1e6:.1f}"
-            if "subtitle" in line.lower() and ("429" in line or "Unable to download" in line):
-                # Subtitle fetch failed (usually YouTube throttling) — the
-                # video still lands, but tell the user the subs were skipped
-                with jobs_lock:
-                    jobs[job_id]["subswarn"] = True
-            elif any(x in line for x in ["[Merger]", "[VideoConvertor]", "[ExtractAudio]",
+            if "[EmbedSubtitle]" in line and "Embedding" in line:
+                # Positive proof a subtitle track went into the file; the
+                # warning below only fires when this never happened.
+                subs_embedded = True
+            if any(x in line for x in ["[Merger]", "[VideoConvertor]", "[ExtractAudio]",
                                           "[EmbedSubtitle]", "[Metadata]", "[FixupM"]):
                 progress, code = 94, "process"
             elif "time=" in line and code != "process":
@@ -957,6 +961,10 @@ def run_job(job_id: str, data: dict, output_dir: str):
             jobs[job_id].update({"done": True, "success": success,
                                  "progress": 100 if success else 0})
             jobs[job_id]["code"] = "done" if success else ("stopped" if cancelled else "error")
+            if success and want_subs and not subs_embedded:
+                # Subs were asked for but nothing got embedded — no uploader
+                # subtitles on this video, or the endpoint throttled us
+                jobs[job_id]["subswarn"] = True
             if not success and not cancelled:
                 errs = [l for l in jobs[job_id]["lines"]
                         if "ERROR" in l or "error:" in l.lower()]
