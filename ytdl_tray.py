@@ -1025,7 +1025,14 @@ def run_job(job_id: str, data: dict, output_dir: str):
                                 jobs[job_id]["speed"] = f"{rate:.1f}"
                         ff_last_bytes, ff_last_t = cur, now
             with jobs_lock:
-                jobs[job_id]["lines"].append(line)
+                lines = jobs[job_id]["lines"]
+                lines.append(line)
+                # A big playlist emits tens of thousands of lines; the page
+                # never shows them and the error scan only needs the tail.
+                if len(lines) > 500:
+                    cut = len(lines) - 400
+                    del lines[:cut]
+                    jobs[job_id]["read_idx"] = max(0, jobs[job_id]["read_idx"] - cut)
                 jobs[job_id]["progress"] = progress
                 jobs[job_id]["code"] = code
                 jobs[job_id]["item"] = item
@@ -1050,6 +1057,8 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 "url": data["url"], "meta": history_meta(data),
                 "dir": output_dir, "success": success,
             })
+            # the page shows 20 entries; don't hoard the rest forever
+            del download_history[20:]
     except FileNotFoundError:
         with jobs_lock:
             jobs[job_id].update({"done": True, "success": False, "code": "error",
@@ -1242,6 +1251,11 @@ def download_route():
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     job_id = str(uuid.uuid4())[:8]
     with jobs_lock:
+        # The tray app can run for weeks — drop old finished jobs so the
+        # dict (and the output lines each one holds) can't grow forever
+        done_ids = [jid for jid, j in jobs.items() if j["done"]]
+        for jid in done_ids[:-20]:
+            del jobs[jid]
         jobs[job_id] = {"done": False, "success": False, "lines": [], "read_idx": 0,
                         "progress": 0, "code": "start", "item": "", "error_line": "",
                         "output_dir": output_dir}
