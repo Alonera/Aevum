@@ -1,8 +1,8 @@
-; Inno Setup script for Aevum
+﻿; Inno Setup script for Aevum
 ; Compile with: ISCC.exe installer.iss  (produces Aevum-Setup.exe)
 
 #define AppName "Aevum"
-#define AppVersion "1.0.0"
+#define AppVersion "1.2.0"
 #define AppExe "Aevum.exe"
 
 [Setup]
