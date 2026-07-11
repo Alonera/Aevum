@@ -1,6 +1,6 @@
-## Aevum v1.1.0 — Linux support
+﻿## Aevum v1.1.0 — Linux support
 
-Aevum now runs on Linux, tested on real hardware (Kali Linux / Debian-based).
+Aevum now runs on Linux, tested on real hardware (Debian-based Linux).
 
 ### Download
 
