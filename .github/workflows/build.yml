@@ -32,6 +32,15 @@ jobs:
           mkdir -p fftmp && tar -xf ffmpeg.tar.xz -C fftmp
           cp fftmp/ffmpeg-*-static/ffmpeg bin/ffmpeg
           chmod +x bin/ffmpeg
+          # ffmpeg 8.1.x must never ship: its HTTP range requests hang
+          # forever on googlevideo, breaking clip downloads (yt-dlp #16546).
+          # 7.x and 8.0 are known good. Fail loudly if the upstream
+          # "release" build ever moves to a bad version.
+          ver=$(bin/ffmpeg -version | head -1 | awk '{print $3}')
+          echo "bundled ffmpeg: $ver"
+          case "$ver" in
+            8.1*) echo "REFUSING to bundle ffmpeg $ver (googlevideo range-request hang)"; exit 1 ;;
+          esac
 
       - name: Build AppImage + tar.gz
         run: |
