@@ -38,8 +38,11 @@ You only need to do this once.
 ## Features
 
 - **Any site** — powered by yt-dlp, works far beyond YouTube.
-- **Video or audio** — pick resolution (up to 4K), container (MP4/MKV), or extract audio (MP3/M4A/Opus/FLAC/WAV) at your chosen bitrate.
-- **Subtitles** — download and embed subtitles (best-effort; never blocks the download).
+- **Video or audio** — pick resolution (up to 4K), container (MP4/MKV/WebM, plus an editor-friendly H.264 preset), or extract audio (MP3/M4A/Opus/FLAC/WAV) at your chosen bitrate.
+- **Preview before you download** — paste a link and see the title, duration and thumbnail; resolutions the video doesn't offer are dimmed, with size hints on the rest.
+- **Clips** — download just a section (start → end). Frame-exact by default at full speed; an optional lossless mode keeps the original stream bytes. Works for audio too.
+- **Thumbnail** — save the cover image alongside the video.
+- **Subtitles** — embeds the uploader's own subtitles into the file (best-effort; never blocks the download).
 - **Playlists** — download a whole playlist into an auto-created folder; endless YouTube Mixes are safely capped.
 - **Login-only content** — use your browser's cookies to download from sites where you're signed in (your own account).
 - **Stop button** — cancel a download at any time.
