@@ -1,8 +1,9 @@
 # Third-Party Licenses
 
-The distributed `VideoIndirici.exe` bundles the following third-party programs.
-They are invoked as separate executables (subprocesses); this project's own
-code merely calls them.
+The distributed Aevum builds (`Aevum.exe`, `Aevum-Setup.exe`,
+`Aevum-x86_64.AppImage` and `Aevum-linux-x86_64.tar.gz`) bundle the following
+third-party programs. They are invoked as separate executables (subprocesses);
+this project's own code merely calls them.
 
 ## yt-dlp
 
@@ -13,7 +14,8 @@ code merely calls them.
 ## FFmpeg
 
 - Project: https://ffmpeg.org
-- Bundled build: gyan.dev "release-essentials" (https://www.gyan.dev/ffmpeg/builds/)
+- Bundled build (Windows): gyan.dev "release-essentials" (https://www.gyan.dev/ffmpeg/builds/)
+- Bundled build (Linux): John Van Sickle static build (https://johnvansickle.com/ffmpeg/)
 - License: **GNU General Public License, version 3 (GPLv3)**
 - Role: merges video/audio streams, extracts audio, embeds subtitles.
 
@@ -32,4 +34,6 @@ FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
 
 ## Fonts
 
-- JetBrains Mono (loaded from Google Fonts at runtime) — SIL Open Font License 1.1.
+- JetBrains Mono — SIL Open Font License 1.1. The woff2 files are bundled in
+  `fonts/` and served locally by the app; no request is made to Google Fonts
+  or any other host at runtime.
