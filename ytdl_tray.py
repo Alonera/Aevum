@@ -692,7 +692,7 @@ function setMode(m){const vr=document.getElementById('vrows'),ar=document.getEle
 // The link is the bottleneck, so downloads run one at a time. Pressing
 // Download while one is busy adds the next link to the queue instead of
 // being locked out; the panel below shows every entry with its own bar.
-function go(){const url=inp.value.trim();if(!url||gb.disabled)return;const dir=document.getElementById('dir').value.trim();const clipStart=document.getElementById('clipStart').value.trim();const clipEnd=document.getElementById('clipEnd').value.trim();pw.classList.add('show');pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';fetch('/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,...state,dir,clipStart,clipEnd})}).then(r=>r.json()).then(()=>{inp.value='';inp.dispatchEvent(new Event('input'));startPolling();refresh();}).catch(()=>{pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';});}
+function go(){const url=inp.value.trim();if(!url||gb.disabled)return;const dir=document.getElementById('dir').value.trim();const clipStart=document.getElementById('clipStart').value.trim();const clipEnd=document.getElementById('clipEnd').value.trim();pw.classList.add('show');pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';fetch('/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,...state,dir,clipStart,clipEnd})}).then(r=>r.json()).then(()=>{inp.value='';inp.dispatchEvent(new Event('input'));refresh();}).catch(()=>{pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';});}
 function cancelJob(){if(!jobId)return;stopbtn.classList.remove('show');pt.textContent=T('stopping');pt.style.color='rgba(255,150,90,0.9)';fetch('/cancel/'+jobId,{method:'POST'}).then(()=>refresh());}
 // Same endpoint for a job that has not started: the server retires it
 // without a process to kill, so it just leaves the queue.
@@ -703,6 +703,10 @@ function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 // running, and the panel below lists the queue and the finished rows.
 function refresh(){fetch('/jobs').then(r=>r.json()).then(d=>{
   renderPanel(d);
+  // Own the timer here, not at the call sites: reloading the page mid-queue
+  // used to leave the panel frozen on its first snapshot, because only the
+  // Download button ever started polling.
+  if(d.active.length)startPolling();else stopPolling();
   const run=d.active.find(j=>j.code!=='queued');
   if(run){
     jobId=run.id;stopbtn.classList.add('show');pw.classList.add('show');
@@ -718,7 +722,7 @@ function refresh(){fetch('/jobs').then(r=>r.json()).then(d=>{
     jobId=null;stopbtn.classList.remove('show');pf.classList.remove('indet');
     pf.style.width='0%';pt.textContent=T('queued');pt.style.color='rgba(255,255,255,0.35)';
   }else{
-    jobId=null;stopbtn.classList.remove('show');pf.classList.remove('indet');stopPolling();
+    jobId=null;stopbtn.classList.remove('show');pf.classList.remove('indet');
     if(d.last){
       pt.textContent=statusText(d.last);
       if(d.last.success){pf.style.width='100%';pt.style.color='rgba(var(--accent),0.7)';}
@@ -1017,20 +1021,52 @@ def _clip_duration_seconds(data: dict):
     return None
 
 
-def run_job(job_id: str, data: dict, output_dir: str):
-    cmd = build_cmd(data, output_dir)
-    clip_dur = _clip_duration_seconds(data)
-    # A section download runs through ffmpeg, which stays SILENT (no percent
-    # lines) for the whole transfer. Mark the job so the UI shows an
-    # indeterminate "downloading clip" state instead of a frozen 0%.
-    is_clip = (_parse_timestamp(data.get("clipStart", "")) is not None or
-               _parse_timestamp(data.get("clipEnd", "")) is not None)
+def _record_history(job_id: str, data: dict, output_dir: str, success: bool):
     with jobs_lock:
-        jobs[job_id]["lines"].append("$ " + " ".join(cmd))
-        jobs[job_id]["started"] = True
-        if is_clip:
-            jobs[job_id]["code"] = "clip"
+        title = jobs[job_id].get("title", "")
+    with history_lock:
+        download_history.insert(0, {
+            "url": data["url"], "title": title, "meta": history_meta(data),
+            "dir": output_dir, "success": success,
+        })
+        # the page shows 20 entries; don't hoard the rest forever
+        del download_history[20:]
+
+
+def _fail_job(job_id: str, data: dict, output_dir: str, error_line: str):
+    """A job that died before yt-dlp could report anything itself.
+
+    It still has to leave the queue, land in the list as a failed row, and
+    carry a finish time — without one it would sort as the oldest result and
+    the bar would keep showing some earlier success instead of this error.
+    "started" matters for the same reason: it separates a job that was
+    attempted from one the user dropped out of the queue, and only attempted
+    jobs count as a result. A failure this early is still an attempt.
+    """
+    with jobs_lock:
+        jobs[job_id].update({"done": True, "success": False, "code": "error",
+                             "started": True, "progress": 0, "speed": "", "eta": "",
+                             "finished_at": time.time(), "error_line": error_line})
+    _record_history(job_id, data, output_dir, False)
+
+
+def run_job(job_id: str, data: dict, output_dir: str):
+    # Everything runs inside the try: a job that raises before it is marked
+    # done would sit in the list as a phantom "downloading" row forever, and
+    # on Linux the watchdog would never let the app exit.
     try:
+        cmd = build_cmd(data, output_dir)
+        clip_dur = _clip_duration_seconds(data)
+        # A section download runs through ffmpeg, which stays SILENT (no percent
+        # lines) for the whole transfer. Mark the job so the UI shows an
+        # indeterminate "downloading clip" state instead of a frozen 0%.
+        is_clip = (_parse_timestamp(data.get("clipStart", "")) is not None or
+                   _parse_timestamp(data.get("clipEnd", "")) is not None)
+        with jobs_lock:
+            jobs[job_id]["lines"].append("$ " + " ".join(cmd))
+            jobs[job_id]["started"] = True
+            if is_clip:
+                jobs[job_id]["code"] = "clip"
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace", bufsize=1,
                                 env=_clean_env(),
@@ -1164,21 +1200,11 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 jobs[job_id]["error_line"] = errs[-1][:140] if errs else ""
         with jobs_lock:
             title = jobs[job_id].get("title", "")
-        with history_lock:
-            download_history.insert(0, {
-                "url": data["url"], "title": title, "meta": history_meta(data),
-                "dir": output_dir, "success": success,
-            })
-            # the page shows 20 entries; don't hoard the rest forever
-            del download_history[20:]
+        _record_history(job_id, data, output_dir, success)
     except FileNotFoundError:
-        with jobs_lock:
-            jobs[job_id].update({"done": True, "success": False, "code": "error",
-                                 "error_line": "yt-dlp not found — reinstall Aevum"})
+        _fail_job(job_id, data, output_dir, "yt-dlp not found — reinstall Aevum")
     except Exception as e:
-        with jobs_lock:
-            jobs[job_id].update({"done": True, "success": False, "code": "error",
-                                 "error_line": str(e)[:140]})
+        _fail_job(job_id, data, output_dir, str(e)[:140])
 
 
 @app.route("/")
