@@ -45,7 +45,8 @@ You only need to do this once.
 - **Subtitles** — embeds the uploader's own subtitles into the file (best-effort; never blocks the download).
 - **Playlists** — download a whole playlist into an auto-created folder; endless YouTube Mixes are safely capped.
 - **Login-only content** — use your browser's cookies to download from sites where you're signed in (your own account).
-- **Stop button** — cancel a download at any time.
+- **Queue** — press Download while one is running and the next link lines up behind it. Every entry gets its own row with the size, speed and time left, and you can drop one back out of the queue.
+- **Stop button** — cancel the running download at any time.
 - **8 languages** — English, Türkçe, Español, Deutsch, Français, Italiano, Português, Русский. Your choice is remembered.
 - **Self-contained** — yt-dlp and FFmpeg are bundled; nothing else to install.
 - **No ads, no tracking** — no adware, no bundled toolbars, no telemetry. Everything runs locally.
