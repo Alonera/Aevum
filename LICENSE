@@ -23,7 +23,8 @@ SOFTWARE.
 ---
 
 NOTE: The MIT license above covers this project's own source code only.
-The distributed .exe bundles third-party programs (yt-dlp and FFmpeg) that
-carry their own licenses. See THIRD_PARTY_LICENSES.md. In particular, the
-bundled FFmpeg build is licensed under the GNU GPL; redistributing the .exe
-means also complying with the GPL for that component.
+The distributed builds (the Windows .exe and installer, the Linux AppImage
+and tarball) bundle third-party programs (yt-dlp and FFmpeg) that carry
+their own licenses. See THIRD_PARTY_LICENSES.md. In particular, the bundled
+FFmpeg build is licensed under the GNU GPL; redistributing any of those
+builds means also complying with the GPL for that component.
