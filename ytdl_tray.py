@@ -222,8 +222,10 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .q-stat.wait{color:rgba(255,255,255,0.22)}
 .q-x{background:none;border:none;color:rgba(255,255,255,0.25);font-family:inherit;font-size:11px;line-height:1;cursor:pointer;padding:0 2px}
 .q-x:hover{color:rgba(255,120,100,0.8)}
-.q-bar{height:2px;background:rgba(255,255,255,0.06);border-radius:2px;margin-top:5px;overflow:hidden}
-.q-fill{height:100%;background:rgba(var(--accent),0.55);border-radius:2px;transition:width .3s ease}
+.q-bar{height:2px;background:rgba(255,255,255,0.06);border-radius:99px;margin-top:5px;overflow:hidden}
+.q-fill{height:100%;background:linear-gradient(90deg,rgba(var(--accent),0.4),rgba(var(--accent),0.75));border-radius:99px;width:0%;transition:width .5s cubic-bezier(.4,0,.2,1);position:relative}
+.q-fill::after{content:'';position:absolute;right:0;top:-2px;width:4px;height:6px;background:rgba(var(--accent),0.95);border-radius:99px;box-shadow:0 0 6px rgba(var(--accent),0.8)}
+.q-fill::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.4),transparent);transform:translateX(-100%);animation:shimmer 1.5s linear infinite}
 .hist-ok{color:rgba(var(--accent),0.6);font-size:9px;white-space:nowrap}
 .hist-err{color:rgba(255,100,80,0.6);font-size:9px;white-space:nowrap}
 .br-controls{position:fixed;right:16px;bottom:16px;z-index:60;display:flex;gap:8px;align-items:flex-end}
@@ -732,29 +734,59 @@ function refresh(){fetch('/jobs').then(r=>r.json()).then(d=>{
   }
 }).catch(()=>{});}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function qid(j){return String(j.id).replace(/[^a-z0-9]/gi,'');}
+function qBits(j){
+  const bits=[];
+  if(j.item)bits.push('['+j.item+']');
+  if(j.code==='queued'){bits.push(T('queued'));}
+  else{
+    bits.push((j.progress||0)+'%');
+    if(j.total)bits.push(j.total);
+    if(j.speed)bits.push(j.speed+' MB/s');
+    if(j.eta)bits.push('ETA '+j.eta);
+  }
+  return bits.join(' · ');
+}
+let qSig='',hSig='';
 function renderPanel(d){
   const qw=document.getElementById('queue-list'),hw=document.getElementById('hist-list');
-  if(!d.active.length&&!d.past.length){document.getElementById('hist-wrap').style.display='none';return;}
+  if(!d.active.length&&!d.past.length){document.getElementById('hist-wrap').style.display='none';qSig=hSig='';return;}
   document.getElementById('hist-wrap').style.display='block';
-  qw.innerHTML=d.active.map(j=>{
-    const wait=(j.code==='queued'),name=j.title||j.url,bits=[];
-    if(j.item)bits.push('['+j.item+']');
-    if(wait){bits.push(T('queued'));}
-    else{
-      bits.push((j.progress||0)+'%');
-      if(j.total)bits.push(j.total);
-      if(j.speed)bits.push(j.speed+' MB/s');
-      if(j.eta)bits.push('ETA '+j.eta);
-    }
-    // Job ids are hex; strip anything else rather than trust it in markup.
-    // The remove button carries the id and a delegated listener reads it —
-    // an inline onclick would need a quote escape, and HTML is not a raw
-    // Python string, so the backslash would be eaten before the browser.
-    const id=String(j.id).replace(/[^a-z0-9]/gi,'');
-    const bar=wait?'':'<div class="q-bar"><div class="q-fill" style="width:'+(j.progress||0)+'%"></div></div>';
-    return '<div class="q-item"><div class="q-top"><span class="q-name'+(wait?' wait':'')+'">'+esc(name)+'</span><span class="q-stat'+(wait?' wait':'')+'">'+esc(bits.join(' · '))+'</span><button class="q-x" data-drop="'+id+'" title="'+esc(T('qRemove'))+'">×</button></div>'+bar+'</div>';
-  }).join('');
-  hw.innerHTML=d.past.map(h=>'<div class="hist-item"><span class="hist-url">'+esc(h.title||h.url)+'</span><span class="hist-meta">'+esc(h.meta)+'</span><span class="'+(h.success?'hist-ok':'hist-err')+'">'+(h.success?'✓':'✗')+'</span></div>').join('');
+  // Rebuild only when the rows themselves change. Rewriting the markup on
+  // every poll handed each bar a brand new element, and a fresh element is
+  // born at its final width with its shimmer restarted — that is why the row
+  // bar stepped along while the main one glided. Steady state now just moves
+  // the width, so the transition and the shimmer both survive.
+  const sig=d.active.map(j=>j.id+(j.code==='queued'?':q':':r')).join(',');
+  if(sig!==qSig){
+    qSig=sig;
+    qw.innerHTML=d.active.map(j=>{
+      const wait=(j.code==='queued');
+      // Job ids are hex; strip anything else rather than trust it in markup.
+      // The remove button carries the id and a delegated listener reads it —
+      // an inline onclick would need a quote escape, and HTML is not a raw
+      // Python string, so the backslash would be eaten before the browser.
+      const id=qid(j);
+      const bar=wait?'':'<div class="q-bar"><div class="q-fill" style="width:'+(j.progress||0)+'%"></div></div>';
+      return '<div class="q-item" data-row="'+id+'"><div class="q-top"><span class="q-name'+(wait?' wait':'')+'">'+esc(j.title||j.url)+'</span><span class="q-stat'+(wait?' wait':'')+'">'+esc(qBits(j))+'</span><button class="q-x" data-drop="'+id+'" title="'+esc(T('qRemove'))+'">×</button></div>'+bar+'</div>';
+    }).join('');
+  }else{
+    d.active.forEach(j=>{
+      const row=qw.querySelector('[data-row="'+qid(j)+'"]');
+      if(!row)return;
+      row.querySelector('.q-name').textContent=j.title||j.url;
+      row.querySelector('.q-stat').textContent=qBits(j);
+      const fill=row.querySelector('.q-fill');
+      if(fill)fill.style.width=(j.progress||0)+'%';
+    });
+  }
+  // Finished rows only change when something finishes, so leave them alone
+  // in between instead of rewriting the list 85 times a minute.
+  const hsig=d.past.map(h=>(h.title||h.url)+h.success).join(',');
+  if(hsig!==hSig){
+    hSig=hsig;
+    hw.innerHTML=d.past.map(h=>'<div class="hist-item"><span class="hist-url">'+esc(h.title||h.url)+'</span><span class="hist-meta">'+esc(h.meta)+'</span><span class="'+(h.success?'hist-ok':'hist-err')+'">'+(h.success?'✓':'✗')+'</span></div>').join('');
+  }
 }
 document.getElementById('queue-list').addEventListener('click',e=>{
   const b=e.target.closest('[data-drop]');
