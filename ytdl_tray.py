@@ -836,6 +836,11 @@ if(!localStorage.getItem('aevum_onboarded')){setTimeout(()=>settingsPanel.classL
 HEIGHT_MAP = {"4k": "2160", "1440p": "1440", "1080p": "1080",
               "720p": "720", "480p": "480", "360p": "360"}
 
+# Which button was pressed, short enough to sit in a filename. The extension
+# on its own cannot say: MP4 and H.264 both write .mp4, so the two used to
+# land on one name and the second download was skipped as already there.
+CONT_TAG = {"mp4": "mp4", "mkv": "mkv", "mp4h264": "h264", "webm": "webm"}
+
 MIX_CAP = 50  # YouTube Mix/radio playlists are endless; cap them here
 
 
@@ -947,19 +952,33 @@ def build_cmd(data: dict, output_dir: str) -> list:
     is_playlist = bool(data.get("playlist"))
     want_thumb = bool(data.get("thumb"))
 
+    # The same video at two qualities, or as MP4 and then as H.264, used to
+    # land on one filename. yt-dlp saw the file already sitting there,
+    # skipped it and exited cleanly, so the app reported success while the
+    # first file stayed where it was. Height and button name keep them
+    # apart. The height is written conditionally because sites that report
+    # none — Instagram's progressive streams for one — would otherwise get
+    # "NAp" glued to every filename. Audio carries neither.
+    if mode == "video":
+        tag = CONT_TAG.get(data.get("cont", "mp4"), "")
+        vtag = "%(height& {}p|)s" + (f" {tag}" if tag else "")
+    else:
+        vtag = ""
+
     if is_playlist:
         # Create a subfolder named after the playlist, number the files inside
         out = os.path.join(output_dir,
                            "%(playlist_title|Playlist)s",
-                           "%(autonumber)03d - %(title).150B [%(id)s].%(ext)s")
+                           f"%(autonumber)03d - %(title).150B [%(id)s]{vtag}.%(ext)s")
     elif want_thumb:
         # Thumbnail selected: give this download its own folder so the video
-        # and its cover image don't clutter the main folder alongside others
+        # and its cover image don't clutter the main folder alongside others.
+        # The folder stays unsuffixed so two versions of one video share it.
         out = os.path.join(output_dir,
                            "%(title).150B [%(id)s]",
-                           "%(title).150B [%(id)s].%(ext)s")
+                           f"%(title).150B [%(id)s]{vtag}.%(ext)s")
     else:
-        out = os.path.join(output_dir, "%(title).180B [%(id)s].%(ext)s")
+        out = os.path.join(output_dir, f"%(title).180B [%(id)s]{vtag}.%(ext)s")
 
     cmd = [YTDLP, "--newline", "--add-metadata", "--no-mtime",
            "--retries", "10", "--fragment-retries", "10",
