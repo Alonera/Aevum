@@ -197,7 +197,7 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .stop:hover{background:rgba(255,80,60,0.2);box-shadow:0 0 14px -3px rgba(255,80,60,0.4)}
 .stop:active{transform:scale(0.93)}
 .stop.show{display:block}
-.note{font-size:10px;color:rgba(255,180,80,0.9);line-height:1.5;margin:-10px 0 12px 2px;transition:color .2s ease}
+.note{font-size:10px;color:rgba(var(--accent),0.9);line-height:1.5;margin:-10px 0 12px 2px;transition:color .2s ease}
 .note:empty{display:none}
 .pcard{display:none;gap:11px;margin:-8px 0 14px;padding:9px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:10px;align-items:center}
 .pcard.show{display:flex;animation:fsd .3s ease both}
