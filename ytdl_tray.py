@@ -905,8 +905,13 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
         # Both spellings matter: YouTube reports "vp9", while sites serving
         # VP9 inside an mp4 report "vp09.00.31..." and the old ^=vp9 test
         # quietly missed every one of them.
+        # The audio has to be something webm can actually hold. Pairing a
+        # VP9 stream with the AAC track sitting next to it on Instagram
+        # builds a command ffmpeg cannot finish — the merge dies on
+        # "Conversion failed!" and leaves the part files behind. Sites that
+        # offer no Opus or Vorbis fall through to the plain best instead.
         return (f"bestvideo{hc}[ext=webm]+bestaudio[ext=webm]/"
-                f"bestvideo{hc}[vcodec~='^vp0?9']+bestaudio/"
+                f"bestvideo{hc}[vcodec~='^vp0?9']+bestaudio[acodec~='^(opus|vorbis)']/"
                 f"best{hc}/best")
     return f"bestvideo{hc}+bestaudio/best{hc}/best"
 
