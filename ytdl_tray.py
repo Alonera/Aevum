@@ -856,6 +856,22 @@ def is_mix_playlist(url: str) -> bool:
     return playlist_id(url).startswith("RD")
 
 
+_VIMEO_PLAIN = re.compile(r"^https?://(?:www\.)?vimeo\.com/(\d+)/?(?:[?#].*)?$", re.I)
+
+
+def normalize_url(url: str) -> str:
+    """Rewrite links yt-dlp currently cannot open into ones it can.
+
+    Vimeo revoked the anonymous OAuth tokens yt-dlp signs in with, so every
+    plain vimeo.com/<id> comes back 401 Unauthorized while the very same
+    video opens through its player URL (yt-dlp issue #17271). Only the bare
+    numeric form is rewritten — channel, showcase and unlisted links carry
+    parts of the path that the player URL would throw away.
+    """
+    m = _VIMEO_PLAIN.match((url or "").strip())
+    return f"https://player.vimeo.com/video/{m.group(1)}" if m else url
+
+
 def kill_process_tree(pid: int):
     try:
         if sys.platform == "win32":
@@ -952,7 +968,7 @@ def _parse_timestamp(text: str):
 
 
 def build_cmd(data: dict, output_dir: str) -> list:
-    url  = data["url"]
+    url  = normalize_url(data["url"])
     mode = data.get("mode", "video")
     is_playlist = bool(data.get("playlist"))
     want_thumb = bool(data.get("thumb"))
@@ -1466,7 +1482,7 @@ def _probe_cache_put(url: str, summary: dict):
 @app.route("/probe", methods=["POST"])
 def probe_route():
     data = request.json or {}
-    url = (data.get("url") or "").strip()
+    url = normalize_url((data.get("url") or "").strip())
     if not url:
         return jsonify({"error": "empty URL"}), 400
 
