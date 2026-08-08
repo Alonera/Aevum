@@ -548,14 +548,14 @@ function closeThemeMenu(){themeMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(themebox&&!themebox.contains(e.target))closeThemeMenu();});
 // ── settings ──
 const SETTINGS_TEXT={
- en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.',updGet:'Update',updNew:'{v} is out.',updLatest:'This is the newest version.',updManual:'{v} is out - get it from the releases page.',updWorking:'downloading... {p}%',updDone:'Downloaded next to the current file. Close Aevum and swap the two.',updStarted:'Installer started - Aevum is closing.',updFail:'Update failed.'},
- tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın.",updGet:'Güncelle',updNew:'{v} çıktı.',updLatest:'En güncel sürümdesin.',updManual:'{v} çıktı - sürümler sayfasından indir.',updWorking:'iniyor... %{p}',updDone:'Yenisi mevcut dosyanın yanına indi. Aevum kapandıktan sonra ikisini değiştir.',updStarted:'Kurulum başladı - Aevum kapanıyor.',updFail:'Güncelleme başarısız.'},
- es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con el sistema y espera en la bandeja — ábrelo cuando lo necesites.',menu:'Añadir al menú',menuHint:'Instala Aevum en el menú de aplicaciones — ábrelo como una app normal, sin terminal.',updGet:'Actualizar',updNew:'{v} ya está disponible.',updLatest:'Tienes la última versión.',updManual:'{v} ya está - descárgalo desde la página de versiones.',updWorking:'descargando... {p}%',updDone:'Descargado junto al actual. Cierra Aevum y cambia uno por otro.',updStarted:'Instalador iniciado - Aevum se está cerrando.',updFail:'No se pudo actualizar.'},
- de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit dem System und wartet im Infobereich — öffne es bei Bedarf.',menu:'Zum App-Menü hinzufügen',menuHint:'Installiert Aevum ins Anwendungsmenü — starte es wie eine normale App, ohne Terminal.',updGet:'Aktualisieren',updNew:'{v} ist da.',updLatest:'Du hast die neueste Version.',updManual:'{v} ist da - hol es von der Releases-Seite.',updWorking:'lädt... {p}%',updDone:'Neben der aktuellen Datei gespeichert. Aevum schließen und tauschen.',updStarted:'Installer gestartet - Aevum wird beendet.',updFail:'Update fehlgeschlagen.'},
- fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec le système et attend dans la barre — ouvre-le au besoin.',menu:'Ajouter au menu',menuHint:"Installe Aevum dans le menu des applications — lance-le comme une app normale, sans terminal.",updGet:'Mettre à jour',updNew:'{v} est disponible.',updLatest:'Tu as la dernière version.',updManual:'{v} est disponible - récupère-le sur la page des versions.',updWorking:'téléchargement... {p}%',updDone:'Téléchargé à côté du fichier actuel. Ferme Aevum et remplace-le.',updStarted:'Installateur lancé - Aevum se ferme.',updFail:'Mise à jour impossible.'},
- it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con il sistema e resta nella barra — aprilo quando serve.',menu:'Aggiungi al menu',menuHint:'Installa Aevum nel menu delle applicazioni — avvialo come una normale app, senza terminale.',updGet:'Aggiorna',updNew:'{v} è uscita.',updLatest:'Hai la versione più recente.',updManual:'{v} è uscita - scaricala dalla pagina delle versioni.',updWorking:'download... {p}%',updDone:'Scaricato accanto al file attuale. Chiudi Aevum e sostituiscilo.',updStarted:'Installer avviato - Aevum si sta chiudendo.',updFail:'Aggiornamento non riuscito.'},
- pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o sistema e espera na bandeja — abra quando precisar.',menu:'Adicionar ao menu',menuHint:'Instala o Aevum no menu de aplicativos — abra como um app normal, sem terminal.',updGet:'Atualizar',updNew:'{v} saiu.',updLatest:'Você tem a versão mais recente.',updManual:'{v} saiu - baixe na página de versões.',updWorking:'baixando... {p}%',updDone:'Baixado ao lado do atual. Feche o Aevum e troque os dois.',updStarted:'Instalador iniciado - o Aevum está fechando.',updFail:'Falha ao atualizar.'},
- ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.',updGet:'Обновить',updNew:'Вышла {v}.',updLatest:'У вас последняя версия.',updManual:'Вышла {v} - скачайте со страницы релизов.',updWorking:'загрузка... {p}%',updDone:'Загружено рядом с текущим файлом. Закройте Aevum и замените его.',updStarted:'Установщик запущен - Aevum закрывается.',updFail:'Не удалось обновить.'}
+ en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.',updGet:'Update',updNew:'{v} is out.',updLatest:'This is the newest version.',updManual:'{v} is out - get it from the releases page.',updWorking:'downloading... {p}%',updDone:'Downloaded next to the current file. Close Aevum and swap the two.',updStarted:'Installer started - Aevum is closing.',updFail:'Update failed.',updBusy:'A download is running. Let it finish first.'},
+ tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın.",updGet:'Güncelle',updNew:'{v} çıktı.',updLatest:'En güncel sürümdesin.',updManual:'{v} çıktı - sürümler sayfasından indir.',updWorking:'iniyor... %{p}',updDone:'Yenisi mevcut dosyanın yanına indi. Aevum kapandıktan sonra ikisini değiştir.',updStarted:'Kurulum başladı - Aevum kapanıyor.',updFail:'Güncelleme başarısız.',updBusy:'Bir indirme sürüyor. Önce onun bitmesini bekle.'},
+ es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con el sistema y espera en la bandeja — ábrelo cuando lo necesites.',menu:'Añadir al menú',menuHint:'Instala Aevum en el menú de aplicaciones — ábrelo como una app normal, sin terminal.',updGet:'Actualizar',updNew:'{v} ya está disponible.',updLatest:'Tienes la última versión.',updManual:'{v} ya está - descárgalo desde la página de versiones.',updWorking:'descargando... {p}%',updDone:'Descargado junto al actual. Cierra Aevum y cambia uno por otro.',updStarted:'Instalador iniciado - Aevum se está cerrando.',updFail:'No se pudo actualizar.',updBusy:'Hay una descarga en curso. Espera a que termine.'},
+ de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit dem System und wartet im Infobereich — öffne es bei Bedarf.',menu:'Zum App-Menü hinzufügen',menuHint:'Installiert Aevum ins Anwendungsmenü — starte es wie eine normale App, ohne Terminal.',updGet:'Aktualisieren',updNew:'{v} ist da.',updLatest:'Du hast die neueste Version.',updManual:'{v} ist da - hol es von der Releases-Seite.',updWorking:'lädt... {p}%',updDone:'Neben der aktuellen Datei gespeichert. Aevum schließen und tauschen.',updStarted:'Installer gestartet - Aevum wird beendet.',updFail:'Update fehlgeschlagen.',updBusy:'Ein Download läuft. Warte, bis er fertig ist.'},
+ fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec le système et attend dans la barre — ouvre-le au besoin.',menu:'Ajouter au menu',menuHint:"Installe Aevum dans le menu des applications — lance-le comme une app normale, sans terminal.",updGet:'Mettre à jour',updNew:'{v} est disponible.',updLatest:'Tu as la dernière version.',updManual:'{v} est disponible - récupère-le sur la page des versions.',updWorking:'téléchargement... {p}%',updDone:'Téléchargé à côté du fichier actuel. Ferme Aevum et remplace-le.',updStarted:'Installateur lancé - Aevum se ferme.',updFail:'Mise à jour impossible.',updBusy:'Un téléchargement est en cours. Attends la fin.'},
+ it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con il sistema e resta nella barra — aprilo quando serve.',menu:'Aggiungi al menu',menuHint:'Installa Aevum nel menu delle applicazioni — avvialo come una normale app, senza terminale.',updGet:'Aggiorna',updNew:'{v} è uscita.',updLatest:'Hai la versione più recente.',updManual:'{v} è uscita - scaricala dalla pagina delle versioni.',updWorking:'download... {p}%',updDone:'Scaricato accanto al file attuale. Chiudi Aevum e sostituiscilo.',updStarted:'Installer avviato - Aevum si sta chiudendo.',updFail:'Aggiornamento non riuscito.',updBusy:'Un download è in corso. Aspetta che finisca.'},
+ pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o sistema e espera na bandeja — abra quando precisar.',menu:'Adicionar ao menu',menuHint:'Instala o Aevum no menu de aplicativos — abra como um app normal, sem terminal.',updGet:'Atualizar',updNew:'{v} saiu.',updLatest:'Você tem a versão mais recente.',updManual:'{v} saiu - baixe na página de versões.',updWorking:'baixando... {p}%',updDone:'Baixado ao lado do atual. Feche o Aevum e troque os dois.',updStarted:'Instalador iniciado - o Aevum está fechando.',updFail:'Falha ao atualizar.',updBusy:'Há um download em andamento. Espere terminar.'},
+ ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.',updGet:'Обновить',updNew:'Вышла {v}.',updLatest:'У вас последняя версия.',updManual:'Вышла {v} - скачайте со страницы релизов.',updWorking:'загрузка... {p}%',updDone:'Загружено рядом с текущим файлом. Закройте Aevum и замените его.',updStarted:'Установщик запущен - Aevum закрывается.',updFail:'Не удалось обновить.',updBusy:'Идёт загрузка. Дождитесь её окончания.'}
 };
 const settingsPanel=document.getElementById('settingsPanel'),settingsbox=document.getElementById('settingsbox'),settingsTitle=document.getElementById('settingsTitle'),settingsStartupLabel=document.getElementById('settingsStartupLabel'),settingsHint=document.getElementById('settingsHint'),startupToggle=document.getElementById('startupToggle');
 const menuRow=document.getElementById('menuRow'),menuToggle=document.getElementById('menuToggle'),settingsMenuLabel=document.getElementById('settingsMenuLabel'),settingsMenuHint=document.getElementById('settingsMenuHint'),startupRow=document.getElementById('startupRow');
@@ -578,7 +578,7 @@ function renderUpd(){
     updHint.textContent = s==='download' ? TS('updWorking').replace('{p}',updState.pct||0)
                         : s==='launched' ? TS('updStarted')
                         : s==='done'     ? TS('updDone')
-                        : s==='error'    ? TS('updFail')+(updState.msg?' ('+updState.msg+')':'')
+                        : s==='error'    ? (updState.busy?TS('updBusy'):TS('updFail')+(updState.msg?' ('+updState.msg+')':''))
                         : '';
     return;
   }
@@ -989,9 +989,9 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
         # Instagram's progressive streams really are avc1, but report both
         # their codec and their height as unknown, so every filtered rung
         # above steps over them.
-        return chain("bestvideo{c}[vcodec^=avc1]+bestaudio[ext=m4a]",
-                     "bestvideo{c}[vcodec^=avc1]+bestaudio",
-                     "best{c}[vcodec^=avc1]",
+        return chain("bestvideo{c}[vcodec~='^(avc1|h264)']+bestaudio[ext=m4a]",
+                     "bestvideo{c}[vcodec~='^(avc1|h264)']+bestaudio",
+                     "best{c}[vcodec~='^(avc1|h264)']",
                      "best{c}[ext=mp4]",
                      tail="best[ext=mp4]")
     if container == "webm":
@@ -1027,10 +1027,13 @@ def build_format_sort(vq: str, container: str) -> str:
     codec first and a 4K download settles for the 1080p H.264 stream,
     because H.264 is where the sites stop.
     """
-    keys = []
     h = HEIGHT_MAP.get(vq)
-    if h:
-        keys.append(f"res:{h}")
+    # Size always leads, even with no cap to aim at. "Best" has no entry in
+    # HEIGHT_MAP, so this list used to start with the codec on that one
+    # setting — and yt-dlp puts user keys ahead of its own, which made H.264
+    # outrank resolution and handed Best a 1080p stream off a 4K video. The
+    # bare "res" sorts by size without asking for a particular one.
+    keys = [f"res:{h}" if h else "res"]
     if container == "mp4":
         keys.append("vcodec:avc1")
     return ",".join(keys)
@@ -1074,6 +1077,11 @@ def build_cmd(data: dict, output_dir: str) -> list:
     # which is a different file again.
     cs = _parse_timestamp(data.get("clipStart", ""))
     ce = _parse_timestamp(data.get("clipEnd", ""))
+    # Same correction build_cmd applies further down: an end at or before
+    # the start is dropped. Without it here the name promised a range the
+    # file does not contain — "60-30" on a file that runs 60s to the end.
+    if ce is not None and cs is not None and ce <= cs:
+        ce = None
     if mode == "video" and (cs is not None or ce is not None):
         vtag += f" {cs if cs is not None else 0}-{ce if ce is not None else 'end'}"
     if mode == "video" and data.get("mute"):
@@ -1316,22 +1324,26 @@ def _fix_quality_in_name(path: str) -> str:
     short, long_ = _short_and_long(path)
     if not short or short == long_:
         return path
-    head, ext = os.path.splitext(path)
-    want = f" {short}p"
-    if want in head:
+    # Everything below works on the filename alone, and only on the part
+    # after the id. Searching the whole path found the folder's own id in
+    # the thumbnail layout — which builds a directory that does not exist —
+    # and a plain search-and-replace rewrote titles: a video called
+    # "Epic 1920p Edit" had its title edited instead of its tag.
+    folder, name = os.path.split(path)
+    head, ext = os.path.splitext(name)
+    m = re.search(r"\[[A-Za-z0-9_-]{6,}\]", head)
+    if not m:
         return path
-    if f" {long_}p" in head:
-        new = head.replace(f" {long_}p", want, 1) + ext
-    else:
-        # The site reported no height, so the template left the size out
-        # entirely. Put it in after the id, where it would have been.
-        m = re.search(r"\[[A-Za-z0-9_-]{6,}\]", head)
-        if not m:
-            return path
-        new = head[:m.end()] + want + head[m.end():] + ext
+    want, tail = f" {short}p", head[m.end():]
+    tail = (re.sub(r"^ \d+p", want, tail, count=1)
+            if re.match(r"^ \d+p", tail) else want + tail)
+    new = os.path.join(folder, head[:m.end()] + tail + ext)
+    if new == path or os.path.exists(new):
+        # Something is already there — two chips can land on one stream, so
+        # this is usually the same file twice. Either way it is not ours to
+        # delete; leaving the download under its own name loses nothing.
+        return path
     try:
-        if os.path.exists(new):
-            os.remove(new)
         os.replace(path, new)
         return new
     except OSError:
@@ -2400,6 +2412,13 @@ def update_apply():
     # a preflight.
     if request.headers.get("X-Aevum") != "1":
         return jsonify({"stage": "error", "msg": "bad request"}), 403
+    # The setup path starts the installer and exits the app a second and a
+    # half later. Anything still downloading would be orphaned mid-file with
+    # no window left to say so, and the queue behind it lost.
+    with jobs_lock:
+        if any(not j["done"] for j in jobs.values()):
+            return jsonify({"stage": "error", "busy": True,
+                            "msg": "a download is running"}), 409
     kind = install_kind()
     name = _UPDATE_ASSET.get(kind, "")
     if not name:
