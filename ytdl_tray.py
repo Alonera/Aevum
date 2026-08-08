@@ -570,7 +570,9 @@ function renderUpd(){
   updLine.textContent='Aevum '+updInfo.current;
   updBtn.textContent=TS('updGet');
   if(updState&&updState.stage!=='idle'){
-    updBtn.style.display='none';
+    // An error is a dead end without this: the panel would sit on the
+    // message with no way back short of reloading the page.
+    updBtn.style.display=(updState.stage==='error'&&updInfo&&updInfo.newer&&updInfo.canApply)?'':'none';
     const s=updState.stage;
     updHint.textContent = s==='download' ? TS('updWorking').replace('{p}',updState.pct||0)
                         : s==='launched' ? TS('updStarted')
@@ -589,7 +591,7 @@ function checkUpdate(){fetch('/update/check').then(r=>r.json()).then(d=>{updInfo
 function pollUpd(){fetch('/update/status').then(r=>r.json()).then(d=>{updState=d;renderUpd();
   if(d.stage!=='download'&&updTimer){clearInterval(updTimer);updTimer=null;}}).catch(()=>{});}
 function applyUpdate(){updBtn.style.display='none';updState={stage:'download',pct:0};renderUpd();
-  fetch('/update/apply',{method:'POST'}).then(r=>r.json()).then(d=>{updState=d;renderUpd();
+  fetch('/update/apply',{method:'POST',headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updState=d;renderUpd();
     if(!updTimer)updTimer=setInterval(pollUpd,800);}).catch(()=>{updState={stage:'error',msg:''};renderUpd();});}
 function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');
   if(settingsPanel.classList.contains('open')&&!updAsked){updAsked=true;checkUpdate();}}
@@ -1048,6 +1050,16 @@ def build_cmd(data: dict, output_dir: str) -> list:
         vtag = "%(height& {}p|)s" + (f" {tag}" if tag else "")
     else:
         vtag = ""
+    # Two sections of one video are two different files, and without the
+    # range in the name they are one: the second download finds the first
+    # already there, skips it, and reports success. Same for the muted cut,
+    # which is a different file again.
+    cs = _parse_timestamp(data.get("clipStart", ""))
+    ce = _parse_timestamp(data.get("clipEnd", ""))
+    if mode == "video" and (cs is not None or ce is not None):
+        vtag += f" {cs if cs is not None else 0}-{ce if ce is not None else 'end'}"
+    if mode == "video" and data.get("mute"):
+        vtag += " mute"
 
     if is_playlist:
         # Create a subfolder named after the playlist, number the files inside
@@ -1996,6 +2008,21 @@ def _app_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _update_dir(kind: str) -> str:
+    """Where an update may be written, which is not always where we run.
+
+    An AppImage runs out of a read-only squashfs mount, so _app_dir() there
+    points at /tmp/.mount_XXXX/usr/bin and nothing can be written next to
+    it — not the part file, not the probe. The file it was launched from is
+    the real neighbour, and the environment hands us its path.
+    """
+    if kind == "appimage":
+        launched = os.environ.get("APPIMAGE")
+        if launched:
+            return os.path.dirname(os.path.abspath(launched))
+    return _app_dir()
+
+
 def _version_tuple(s: str) -> tuple:
     """'v1.2.10' -> (1, 2, 10). Anything unreadable sorts oldest.
 
@@ -2060,8 +2087,12 @@ def _published_sha(rel: dict, name: str) -> str:
     with _fetch(url) as r:
         for line in r.read().decode("utf-8", "replace").splitlines():
             parts = line.split()
-            if len(parts) == 2 and parts[0] == name:
-                return parts[1].lower()
+            # Two shapes in the wild: "name  hash", which is what the
+            # releases carry, and "name  SHA256: hash", which is what
+            # build.bat writes locally. Taking the last field covers both,
+            # and a length check keeps a stray line from passing for one.
+            if len(parts) >= 2 and parts[0] == name and len(parts[-1]) == 64:
+                return parts[-1].lower()
     return ""
 
 
@@ -2072,19 +2103,20 @@ def _set_update(**kw):
 
 def _do_update(rel: dict, kind: str, name: str, ver: str):
     """Download, verify, then hand over. Never overwrites a running binary."""
-    tmp = os.path.join(_app_dir(), name + ".part")
+    work = _update_dir(kind)
+    tmp = os.path.join(work, name + ".part")
     try:
         # Ask the folder whether it will take a file before spending ninety
         # megabytes finding out. A copy installed somewhere read-only fails
         # here in a sentence the user can act on, rather than at the last
         # line with a stack error and a path in it.
         try:
-            probe = os.path.join(_app_dir(), ".aevum-write-test")
+            probe = os.path.join(work, ".aevum-write-test")
             with open(probe, "wb"):
                 pass
             os.remove(probe)
         except OSError:
-            _set_update(stage="error", msg="cannot write to " + _app_dir())
+            _set_update(stage="error", msg="cannot write to " + work)
             return
 
         # A tar.gz unpacks into a folder named after the incoming version,
@@ -2096,7 +2128,7 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
         if kind == "tarball":
             here = os.path.abspath(_app_dir())
             out = os.path.abspath(os.path.join(
-                os.path.dirname(_app_dir()) or ".", f"Aevum-{ver}"))
+                os.path.dirname(work) or ".", f"Aevum-{ver}"))
             if here == out or here.startswith(out + os.sep):
                 _set_update(stage="error",
                             msg="the folder for the new version is the one running")
@@ -2130,7 +2162,7 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
             # Replacing the file a running AppImage was mounted from is safe:
             # the mount already holds its own copy. It takes effect on the
             # next launch, which is why this one does not relaunch itself.
-            target = os.environ.get("APPIMAGE") or os.path.join(_app_dir(), name)
+            target = os.environ.get("APPIMAGE") or os.path.join(work, name)
             os.replace(tmp, target)
             os.chmod(target, 0o755)
             _set_update(stage="done", pct=100, path=target)
@@ -2143,7 +2175,7 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
             # versioned folder alongside instead: the new copy is ready to
             # run and the old one still works if it is not.
             import tarfile
-            out = os.path.join(os.path.dirname(_app_dir()) or ".",
+            out = os.path.join(os.path.dirname(work) or ".",
                                f"Aevum-{ver}")
             shutil.rmtree(out, ignore_errors=True)
             os.makedirs(out, exist_ok=True)
@@ -2161,7 +2193,7 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
         if kind == "setup":
             # Named after the version so a half-finished download from an
             # earlier attempt can never be the thing that gets launched.
-            final = os.path.join(_app_dir(), f"Aevum-Setup-{ver}.exe")
+            final = os.path.join(work, f"Aevum-Setup-{ver}.exe")
             if os.path.exists(final):
                 os.remove(final)
             os.replace(tmp, final)
@@ -2182,7 +2214,7 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
         # catch, so the new copy lands beside the old one and the folder
         # opens on it: the swap, minus hunting for the download.
         stem, ext = os.path.splitext(name)
-        final = os.path.join(_app_dir(), f"{stem}-{ver}{ext}")
+        final = os.path.join(work, f"{stem}-{ver}{ext}")
         if os.path.exists(final):
             os.remove(final)
         os.replace(tmp, final)
@@ -2213,13 +2245,25 @@ def update_check():
         "latest": latest,
         "newer": _version_tuple(latest) > _version_tuple(APP_VERSION),
         "kind": kind,
-        "canApply": bool(name and _asset_url(rel, name)),
+        # Without the checksum file there is nothing to verify against and
+        # the download would refuse at the last step, so do not offer it.
+        "canApply": bool(name and _asset_url(rel, name)
+                         and _asset_url(rel, "checksums.txt")),
         "page": rel.get("html_url") or "",
     })
 
 
 @app.route("/update/apply", methods=["POST"])
 def update_apply():
+    # A POST with no body and no content type is a CORS "simple request":
+    # any page open in the browser can send it to localhost without asking
+    # permission first. This one downloads an installer, runs it and then
+    # exits the app, which is not something a stranger gets to decide. A
+    # header the page adds itself cannot be forged that way — setting one
+    # turns the request into a preflighted call, and nothing here answers
+    # a preflight.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"stage": "error", "msg": "bad request"}), 403
     kind = install_kind()
     name = _UPDATE_ASSET.get(kind, "")
     if not name:
