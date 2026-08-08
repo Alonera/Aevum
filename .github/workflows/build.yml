@@ -31,7 +31,12 @@ jobs:
           curl -L -o ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
           mkdir -p fftmp && tar -xf ffmpeg.tar.xz -C fftmp
           cp fftmp/ffmpeg-*-static/ffmpeg bin/ffmpeg
-          chmod +x bin/ffmpeg
+          # ffprobe rides along in the same tarball. yt-dlp reads metadata
+          # through it, and without it --add-metadata gives up with
+          # "ffprobe not found" on some sites. Same build as ffmpeg by
+          # construction, which is the point of taking it from here.
+          cp fftmp/ffmpeg-*-static/ffprobe bin/ffprobe
+          chmod +x bin/ffmpeg bin/ffprobe
           # ffmpeg 8.1.x must never ship: its HTTP range requests hang
           # forever on googlevideo, breaking clip downloads (yt-dlp #16546).
           # 7.x and 8.0 are known good. Fail loudly if the upstream

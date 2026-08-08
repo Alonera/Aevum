@@ -17,7 +17,9 @@ this project's own code merely calls them.
 - Bundled build (Windows): gyan.dev "release-essentials" (https://www.gyan.dev/ffmpeg/builds/)
 - Bundled build (Linux): John Van Sickle static build (https://johnvansickle.com/ffmpeg/)
 - License: **GNU General Public License, version 3 (GPLv3)**
-- Role: merges video/audio streams, extracts audio, embeds subtitles.
+- Binaries shipped: `ffmpeg` and `ffprobe`, both from the build named above.
+- Role: ffmpeg merges video/audio streams, extracts audio and embeds
+  subtitles; ffprobe reads the metadata written into finished files.
 
 ### GPL compliance notice
 
@@ -28,7 +30,7 @@ the GPL for the FFmpeg component:
 - The full GPL license text is available at https://www.gnu.org/licenses/gpl-3.0.html
 - FFmpeg source code corresponding to the bundled build is available from
   https://ffmpeg.org/download.html and https://www.gyan.dev/ffmpeg/builds/
-- No modifications were made to the FFmpeg binary; it is redistributed as-is.
+- No modifications were made to the FFmpeg binaries; they are redistributed as-is.
 
 FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
 

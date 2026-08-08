@@ -2,7 +2,7 @@
 # Build Aevum for Linux: PyInstaller -> AppDir -> AppImage + tar.gz
 #
 # Requires: python3 with  flask pyinstaller
-#           plus  bin/yt-dlp  and  bin/ffmpeg  (Linux binaries), and internet
+#           plus  bin/yt-dlp, bin/ffmpeg and bin/ffprobe (Linux binaries), and internet
 #           (to download appimagetool). The GitHub Actions workflow sets all this up.
 # No tray on Linux (pystray/PIL excluded): the app lives and dies with the
 # browser tab instead.
@@ -11,13 +11,17 @@ cd "$(dirname "$0")"
 
 [ -f bin/yt-dlp ] || { echo "MISSING: bin/yt-dlp (Linux binary)"; exit 1; }
 [ -f bin/ffmpeg ] || { echo "MISSING: bin/ffmpeg (Linux binary)"; exit 1; }
-chmod +x bin/yt-dlp bin/ffmpeg
+# yt-dlp reads metadata through ffprobe; without it --add-metadata gives up
+# with "ffprobe not found" on some sites. It ships beside ffmpeg.
+[ -f bin/ffprobe ] || { echo "MISSING: bin/ffprobe (Linux binary)"; exit 1; }
+chmod +x bin/yt-dlp bin/ffmpeg bin/ffprobe
 
 echo "[1/4] PyInstaller build..."
 rm -rf build dist Aevum.spec
 pyinstaller --noconfirm --clean --name Aevum \
   --add-data "bin/yt-dlp:." \
   --add-data "bin/ffmpeg:." \
+  --add-data "bin/ffprobe:." \
   --add-data "aevum.png:." \
   --add-data "fonts:fonts" \
   --exclude-module "pystray" \
