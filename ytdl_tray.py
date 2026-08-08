@@ -1292,21 +1292,35 @@ def _file_just_written(output_dir: str, since: float) -> str:
     real name. Downloads run one at a time, so the newest video file
     written since this job started is this job's file.
     """
+    # One level down and no further. The templates put a file either in the
+    # download folder or in a single folder of their own — thumbnail and
+    # playlist downloads — so anything deeper belongs to somebody else, and
+    # walking a whole archive tree to find our own file is work nobody
+    # asked for. Measured at 1 ms on a normal folder against nearly three
+    # seconds on a tree of sixty thousand files.
     best, best_t = "", since - 1
-    try:
-        for root, _dirs, files in os.walk(output_dir):
-            for f in files:
-                if not f.lower().endswith(_VIDEO_EXT):
-                    continue
-                p = os.path.join(root, f)
-                try:
-                    t = os.path.getmtime(p)
-                except OSError:
-                    continue
-                if t >= since and t > best_t:
-                    best, best_t = p, t
-    except OSError:
-        return ""
+
+    def scan(d, depth):
+        nonlocal best, best_t
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if e.is_dir():
+                            if depth:
+                                scan(e.path, depth - 1)
+                        elif e.name.lower().endswith(_VIDEO_EXT):
+                            # stat() here comes from the directory listing
+                            # itself on Windows, so it costs nothing extra.
+                            t = e.stat().st_mtime
+                            if t >= since and t > best_t:
+                                best, best_t = e.path, t
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+
+    scan(output_dir, 1)
     return best
 
 
