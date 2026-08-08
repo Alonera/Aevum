@@ -1985,7 +1985,8 @@ _update_cache = {"at": 0.0, "data": None}
 
 _UPDATE_ASSET = {"setup": "Aevum-Setup.exe",
                  "portable": "Aevum.exe",
-                 "appimage": "Aevum-x86_64.AppImage"}
+                 "appimage": "Aevum-x86_64.AppImage",
+                 "tarball": "Aevum-linux-x86_64.tar.gz"}
 
 
 def _app_dir() -> str:
@@ -2010,7 +2011,8 @@ def install_kind() -> str:
         # Inno leaves its uninstaller beside the exe. A portable copy is alone.
         return "setup" if os.path.isfile(
             os.path.join(_app_dir(), "unins000.exe")) else "portable"
-    return "other"
+    # Frozen, on Linux, not an AppImage: whoever unpacked the tar.gz.
+    return "tarball"
 
 
 def _fetch(url: str, timeout: int = 30):
@@ -2091,6 +2093,28 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
             os.replace(tmp, target)
             os.chmod(target, 0o755)
             _set_update(stage="done", pct=100, path=target)
+            return
+
+        if kind == "tarball":
+            # The tarball holds one Aevum/ directory, which is the directory
+            # this process is running out of. Unpacking over it would pull
+            # files out from under a running program, so it goes into a
+            # versioned folder alongside instead: the new copy is ready to
+            # run and the old one still works if it is not.
+            import tarfile
+            out = os.path.join(os.path.dirname(_app_dir()) or ".",
+                               f"Aevum-{ver}")
+            shutil.rmtree(out, ignore_errors=True)
+            os.makedirs(out, exist_ok=True)
+            with tarfile.open(tmp, "r:gz") as tf:
+                try:
+                    tf.extractall(out, filter="data")
+                except TypeError:
+                    # filter= arrived in 3.12. The archive is one we published
+                    # and just checksummed, so the older call is acceptable.
+                    tf.extractall(out)
+            os.remove(tmp)
+            _set_update(stage="done", pct=100, path=out)
             return
 
         if kind == "setup":
