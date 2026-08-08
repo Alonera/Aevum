@@ -928,9 +928,13 @@ def normalize_url(url: str) -> str:
 def kill_process_tree(pid: int):
     try:
         if sys.platform == "win32":
+            # Bounded, because this runs on the Stop button and on the way
+            # out. taskkill can sit there when the target is stuck in a
+            # driver call, and without a limit it takes the quit path with
+            # it — the except below turns a timeout into a shrug.
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
                            creationflags=subprocess.CREATE_NO_WINDOW,
-                           capture_output=True)
+                           capture_output=True, timeout=15)
         else:
             os.killpg(os.getpgid(pid), 15)
     except Exception:
@@ -1764,7 +1768,10 @@ def download_route():
     job_id = str(uuid.uuid4())[:8]
     # The preview card has almost always probed this URL already, so the
     # title is a cache hit; without it the row just falls back to the URL.
-    cached = _probe_cache.get(url) or {}
+    # Keyed the way the probe stored it. A Vimeo link is rewritten on its
+    # way to yt-dlp, so the raw address the user pasted is not the one the
+    # card was filed under, and looking it up unchanged loses the title.
+    cached = _probe_cache.get(normalize_url(url)) or {}
     with jobs_lock:
         # The tray app can run for weeks — drop old finished jobs so the
         # dict (and the output lines each one holds) can't grow forever
