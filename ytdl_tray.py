@@ -836,10 +836,11 @@ if(!localStorage.getItem('aevum_onboarded')){setTimeout(()=>settingsPanel.classL
 HEIGHT_MAP = {"4k": "2160", "1440p": "1440", "1080p": "1080",
               "720p": "720", "480p": "480", "360p": "360"}
 
-# Which button was pressed, short enough to sit in a filename. The extension
-# on its own cannot say: MP4 and H.264 both write .mp4, so the two used to
-# land on one name and the second download was skipped as already there.
-CONT_TAG = {"mp4": "mp4", "mkv": "mkv", "mp4h264": "h264", "webm": "webm"}
+# Only H.264 needs naming in the filename. It writes .mp4 files, exactly
+# like the MP4 button, so without a tag the two land on one name and the
+# second download is skipped as already there. MKV and WebM are already
+# told apart by their extension and are left to say it themselves.
+CONT_TAG = {"mp4h264": "h264"}
 
 MIX_CAP = 50  # YouTube Mix/radio playlists are endless; cap them here
 
