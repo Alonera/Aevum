@@ -66,7 +66,7 @@ PORT = 5000
 # carry it too — build.bat refuses to build when the three disagree, because
 # the updater compares this string against the newest release tag and a stale
 # constant would either hide a real update or offer one that is already here.
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 UPDATE_REPO = "Alonera/Aevum"
 
 # ── Page liveness tracking (on Linux the app lives with the browser tab) ─────
@@ -135,6 +135,7 @@ def _clean_env() -> dict:
 # Bundled yt-dlp + ffmpeg; works without installing anything
 YTDLP = _find_binary("yt-dlp")
 _FFMPEG = _find_binary("ffmpeg")
+FFPROBE = _find_binary("ffprobe")
 FFMPEG_DIR = os.path.dirname(_FFMPEG) if os.path.isfile(_FFMPEG) else ""
 
 HTML = """<!DOCTYPE html>
@@ -1242,6 +1243,97 @@ def _clip_duration_seconds(data: dict):
     return None
 
 
+def _short_and_long(path: str):
+    """The two dimensions of a finished file, smaller first. (0, 0) if unread.
+
+    Nothing before this point knows them. A template can only write
+    %(height)s, which is the long side of a vertical video, and sites that
+    report no height at all — Instagram's progressive copies — leave it
+    blank. The finished file always knows, and ffprobe ships with us now.
+    """
+    try:
+        r = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+                            "-show_entries", "stream=width,height",
+                            "-of", "csv=p=0:s=x", path],
+                           capture_output=True, text=True, timeout=20,
+                           env=_clean_env(),
+                           creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0)
+        w, _, h = (r.stdout or "").strip().partition("x")
+        if w.isdigit() and h.isdigit():
+            return min(int(w), int(h)), max(int(w), int(h))
+    except Exception:
+        pass
+    return 0, 0
+
+
+_VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv")
+
+
+def _file_just_written(output_dir: str, since: float) -> str:
+    """The video this job produced, found by looking rather than by parsing.
+
+    Reading the path out of yt-dlp's own output does not survive a title
+    with a character the console cannot spell: by the time the line reaches
+    us the character is already a question mark, and no amount of decoding
+    brings it back. Forcing UTF-8 on the child does not help either — it is
+    mangled before it is written. The folder, on the other hand, holds the
+    real name. Downloads run one at a time, so the newest video file
+    written since this job started is this job's file.
+    """
+    best, best_t = "", since - 1
+    try:
+        for root, _dirs, files in os.walk(output_dir):
+            for f in files:
+                if not f.lower().endswith(_VIDEO_EXT):
+                    continue
+                p = os.path.join(root, f)
+                try:
+                    t = os.path.getmtime(p)
+                except OSError:
+                    continue
+                if t >= since and t > best_t:
+                    best, best_t = p, t
+    except OSError:
+        return ""
+    return best
+
+
+def _fix_quality_in_name(path: str) -> str:
+    """Rewrite the size in the filename to the short side, once it is known.
+
+    The download itself has to run under a name yt-dlp can tell apart from
+    the last one, or it skips the file and calls that success — which is
+    why the template still writes the height. This puts the honest number
+    in afterwards: 1080p for a 1080x1920 short, matching both the chip that
+    was clicked and the quality the sort selected.
+    """
+    if not path or not os.path.isfile(path):
+        return path
+    short, long_ = _short_and_long(path)
+    if not short or short == long_:
+        return path
+    head, ext = os.path.splitext(path)
+    want = f" {short}p"
+    if want in head:
+        return path
+    if f" {long_}p" in head:
+        new = head.replace(f" {long_}p", want, 1) + ext
+    else:
+        # The site reported no height, so the template left the size out
+        # entirely. Put it in after the id, where it would have been.
+        m = re.search(r"\[[A-Za-z0-9_-]{6,}\]", head)
+        if not m:
+            return path
+        new = head[:m.end()] + want + head[m.end():] + ext
+    try:
+        if os.path.exists(new):
+            os.remove(new)
+        os.replace(path, new)
+        return new
+    except OSError:
+        return path
+
+
 def _record_history(job_id: str, data: dict, output_dir: str, success: bool):
     with jobs_lock:
         title = jobs[job_id].get("title", "")
@@ -1305,6 +1397,8 @@ def run_job(job_id: str, data: dict, output_dir: str):
         progress, code, item = 0, ("clip" if is_clip else "download"), ""
         want_subs = bool(data.get("subs")) and data.get("mode", "video") == "video"
         subs_embedded = False
+        mode = data.get("mode", "video")
+        started_at = time.time()
         ff_last_bytes, ff_last_t = None, 0.0
         for line in proc.stdout:
             line = line.rstrip()
@@ -1406,6 +1500,11 @@ def run_job(job_id: str, data: dict, output_dir: str):
         with jobs_lock:
             cancelled = jobs[job_id].get("cancelled", False)
         success = proc.returncode == 0 and not cancelled
+        if success and mode == "video" and not data.get("playlist"):
+            # The template wrote the height, which is the long side of a
+            # vertical video and blank where the site reported none. Now
+            # that there is a file, ffprobe can say what it really is.
+            _fix_quality_in_name(_file_just_written(output_dir, started_at))
         with jobs_lock:
             jobs[job_id].update({"done": True, "success": success,
                                  "progress": 100 if success else 0,
