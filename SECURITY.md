@@ -9,6 +9,17 @@ a public issue.
 Aevum bundles **yt-dlp**, **FFmpeg** and **ffprobe**; vulnerabilities in those tools
 should be reported to their own projects.
 
+## The local server
+
+Aevum's interface is a page in your browser, served by a small web server that
+listens on `127.0.0.1` only — never on your network, so nothing else on it can
+reach Aevum.
+
+That server answers only the page Aevum opened. A request arriving under any
+other name, or carrying another site's origin, is refused. So a site you happen
+to have open in another tab cannot drive your copy of Aevum — it cannot start a
+download, choose where files are written, or trigger an update.
+
 ## Updating itself
 
 From 1.2.5 Aevum can fetch its own next release. Worth knowing about it:
