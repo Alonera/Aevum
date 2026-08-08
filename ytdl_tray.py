@@ -21,6 +21,7 @@ import subprocess
 import shutil
 import socket
 from pathlib import Path
+import urllib.request
 from urllib.parse import urlparse, parse_qs
 
 try:
@@ -60,6 +61,13 @@ job_queue = []
 queue_cv = threading.Condition()
 
 PORT = 5000
+
+# The one place the version is written in code. version.txt and installer.iss
+# carry it too — build.bat refuses to build when the three disagree, because
+# the updater compares this string against the newest release tag and a stale
+# constant would either hide a real update or offer one that is already here.
+APP_VERSION = "1.2.4"
+UPDATE_REPO = "Alonera/Aevum"
 
 # ── Page liveness tracking (on Linux the app lives with the browser tab) ─────
 _last_seen = time.time()   # time of the last request from the page
@@ -440,6 +448,11 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
         <span class="switch"><input type="checkbox" id="menuToggle" onchange="setMenu(this.checked)"/><span class="slider"></span></span>
       </label>
       <div class="settings-hint" id="settingsMenuHint" style="display:none"></div>
+      <div class="settings-row" style="margin-top:14px">
+        <span class="settings-label" id="updLine">Aevum</span>
+        <button class="chip" id="updBtn" style="display:none;padding:5px 12px;font-size:9px" onclick="applyUpdate()">Update</button>
+      </div>
+      <div class="settings-hint" id="updHint"></div>
     </div>
     <button class="lang-toggle" id="settingsToggle" onclick="toggleSettings(event)" aria-label="Settings">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.4-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.4-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.4V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.4 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.4 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.4 1z"/></svg>
@@ -534,20 +547,52 @@ function closeThemeMenu(){themeMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(themebox&&!themebox.contains(e.target))closeThemeMenu();});
 // ── settings ──
 const SETTINGS_TEXT={
- en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.'},
- tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın."},
- es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con el sistema y espera en la bandeja — ábrelo cuando lo necesites.',menu:'Añadir al menú',menuHint:'Instala Aevum en el menú de aplicaciones — ábrelo como una app normal, sin terminal.'},
- de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit dem System und wartet im Infobereich — öffne es bei Bedarf.',menu:'Zum App-Menü hinzufügen',menuHint:'Installiert Aevum ins Anwendungsmenü — starte es wie eine normale App, ohne Terminal.'},
- fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec le système et attend dans la barre — ouvre-le au besoin.',menu:'Ajouter au menu',menuHint:"Installe Aevum dans le menu des applications — lance-le comme une app normale, sans terminal."},
- it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con il sistema e resta nella barra — aprilo quando serve.',menu:'Aggiungi al menu',menuHint:'Installa Aevum nel menu delle applicazioni — avvialo come una normale app, senza terminale.'},
- pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o sistema e espera na bandeja — abra quando precisar.',menu:'Adicionar ao menu',menuHint:'Instala o Aevum no menu de aplicativos — abra como um app normal, sem terminal.'},
- ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.'}
+ en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.',updGet:'Update',updNew:'{v} is out.',updLatest:'This is the newest version.',updManual:'{v} is out - get it from the releases page.',updWorking:'downloading... {p}%',updDone:'Downloaded next to the current file. Close Aevum and swap the two.',updStarted:'Installer started - Aevum is closing.',updFail:'Update failed.'},
+ tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın.",updGet:'Güncelle',updNew:'{v} çıktı.',updLatest:'En güncel sürümdesin.',updManual:'{v} çıktı - sürümler sayfasından indir.',updWorking:'iniyor... %{p}',updDone:'Yenisi mevcut dosyanın yanına indi. Aevum kapandıktan sonra ikisini değiştir.',updStarted:'Kurulum başladı - Aevum kapanıyor.',updFail:'Güncelleme başarısız.'},
+ es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con el sistema y espera en la bandeja — ábrelo cuando lo necesites.',menu:'Añadir al menú',menuHint:'Instala Aevum en el menú de aplicaciones — ábrelo como una app normal, sin terminal.',updGet:'Actualizar',updNew:'{v} ya está disponible.',updLatest:'Tienes la última versión.',updManual:'{v} ya está - descárgalo desde la página de versiones.',updWorking:'descargando... {p}%',updDone:'Descargado junto al actual. Cierra Aevum y cambia uno por otro.',updStarted:'Instalador iniciado - Aevum se está cerrando.',updFail:'No se pudo actualizar.'},
+ de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit dem System und wartet im Infobereich — öffne es bei Bedarf.',menu:'Zum App-Menü hinzufügen',menuHint:'Installiert Aevum ins Anwendungsmenü — starte es wie eine normale App, ohne Terminal.',updGet:'Aktualisieren',updNew:'{v} ist da.',updLatest:'Du hast die neueste Version.',updManual:'{v} ist da - hol es von der Releases-Seite.',updWorking:'lädt... {p}%',updDone:'Neben der aktuellen Datei gespeichert. Aevum schließen und tauschen.',updStarted:'Installer gestartet - Aevum wird beendet.',updFail:'Update fehlgeschlagen.'},
+ fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec le système et attend dans la barre — ouvre-le au besoin.',menu:'Ajouter au menu',menuHint:"Installe Aevum dans le menu des applications — lance-le comme une app normale, sans terminal.",updGet:'Mettre à jour',updNew:'{v} est disponible.',updLatest:'Tu as la dernière version.',updManual:'{v} est disponible - récupère-le sur la page des versions.',updWorking:'téléchargement... {p}%',updDone:'Téléchargé à côté du fichier actuel. Ferme Aevum et remplace-le.',updStarted:'Installateur lancé - Aevum se ferme.',updFail:'Mise à jour impossible.'},
+ it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con il sistema e resta nella barra — aprilo quando serve.',menu:'Aggiungi al menu',menuHint:'Installa Aevum nel menu delle applicazioni — avvialo come una normale app, senza terminale.',updGet:'Aggiorna',updNew:'{v} è uscita.',updLatest:'Hai la versione più recente.',updManual:'{v} è uscita - scaricala dalla pagina delle versioni.',updWorking:'download... {p}%',updDone:'Scaricato accanto al file attuale. Chiudi Aevum e sostituiscilo.',updStarted:'Installer avviato - Aevum si sta chiudendo.',updFail:'Aggiornamento non riuscito.'},
+ pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o sistema e espera na bandeja — abra quando precisar.',menu:'Adicionar ao menu',menuHint:'Instala o Aevum no menu de aplicativos — abra como um app normal, sem terminal.',updGet:'Atualizar',updNew:'{v} saiu.',updLatest:'Você tem a versão mais recente.',updManual:'{v} saiu - baixe na página de versões.',updWorking:'baixando... {p}%',updDone:'Baixado ao lado do atual. Feche o Aevum e troque os dois.',updStarted:'Instalador iniciado - o Aevum está fechando.',updFail:'Falha ao atualizar.'},
+ ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.',updGet:'Обновить',updNew:'Вышла {v}.',updLatest:'У вас последняя версия.',updManual:'Вышла {v} - скачайте со страницы релизов.',updWorking:'загрузка... {p}%',updDone:'Загружено рядом с текущим файлом. Закройте Aevum и замените его.',updStarted:'Установщик запущен - Aevum закрывается.',updFail:'Не удалось обновить.'}
 };
 const settingsPanel=document.getElementById('settingsPanel'),settingsbox=document.getElementById('settingsbox'),settingsTitle=document.getElementById('settingsTitle'),settingsStartupLabel=document.getElementById('settingsStartupLabel'),settingsHint=document.getElementById('settingsHint'),startupToggle=document.getElementById('startupToggle');
 const menuRow=document.getElementById('menuRow'),menuToggle=document.getElementById('menuToggle'),settingsMenuLabel=document.getElementById('settingsMenuLabel'),settingsMenuHint=document.getElementById('settingsMenuHint'),startupRow=document.getElementById('startupRow');
 function TS(k){const L=SETTINGS_TEXT[curLang]||SETTINGS_TEXT.en;return L[k]||SETTINGS_TEXT.en[k]||k;}
-function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');settingsMenuLabel.textContent=TS('menu');settingsMenuHint.textContent=TS('menuHint');}
-function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');}
+function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');settingsMenuLabel.textContent=TS('menu');settingsMenuHint.textContent=TS('menuHint');renderUpd();}
+// ── Updating Aevum itself ──
+// The check runs when the panel opens, not at launch: nobody wants a
+// download tool phoning home before it has been asked to do anything.
+const updLine=document.getElementById('updLine'),updBtn=document.getElementById('updBtn'),updHint=document.getElementById('updHint');
+let updInfo=null,updState=null,updTimer=null,updAsked=false;
+function renderUpd(){
+  if(!updInfo){updLine.textContent='Aevum';updHint.textContent='';updBtn.style.display='none';return;}
+  updLine.textContent='Aevum '+updInfo.current;
+  updBtn.textContent=TS('updGet');
+  if(updState&&updState.stage!=='idle'){
+    updBtn.style.display='none';
+    const s=updState.stage;
+    updHint.textContent = s==='download' ? TS('updWorking').replace('{p}',updState.pct||0)
+                        : s==='launched' ? TS('updStarted')
+                        : s==='done'     ? TS('updDone')
+                        : s==='error'    ? TS('updFail')+(updState.msg?' ('+updState.msg+')':'')
+                        : '';
+    return;
+  }
+  if(!updInfo.ok){updHint.textContent='';updBtn.style.display='none';return;}
+  if(updInfo.newer){
+    updHint.textContent=TS(updInfo.canApply?'updNew':'updManual').replace('{v}',updInfo.latest);
+    updBtn.style.display=updInfo.canApply?'':'none';
+  }else{updHint.textContent=TS('updLatest');updBtn.style.display='none';}
+}
+function checkUpdate(){fetch('/update/check').then(r=>r.json()).then(d=>{updInfo=d;renderUpd();}).catch(()=>{});}
+function pollUpd(){fetch('/update/status').then(r=>r.json()).then(d=>{updState=d;renderUpd();
+  if(d.stage!=='download'&&updTimer){clearInterval(updTimer);updTimer=null;}}).catch(()=>{});}
+function applyUpdate(){updBtn.style.display='none';updState={stage:'download',pct:0};renderUpd();
+  fetch('/update/apply',{method:'POST'}).then(r=>r.json()).then(d=>{updState=d;renderUpd();
+    if(!updTimer)updTimer=setInterval(pollUpd,800);}).catch(()=>{updState={stage:'error',msg:''};renderUpd();});}
+function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');
+  if(settingsPanel.classList.contains('open')&&!updAsked){updAsked=true;checkUpdate();}}
 function closeSettings(){settingsPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(settingsbox&&!settingsbox.contains(e.target))closeSettings();});
 function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).catch(()=>{});}
@@ -1924,6 +1969,201 @@ def uninstall_menu_entry() -> None:
         except OSError:
             pass
     _refresh_menu_caches()
+
+
+# ── Updating Aevum itself ───────────────────────────────────────────────────
+# Aevum ships as four packages and each one replaces itself differently, so
+# the first job is working out which is running. Whatever gets downloaded is
+# checked against the release's own checksums.txt before anything is opened:
+# this is an unsigned binary pulled over the network and then executed, and
+# that hash is the only thing between a real release and whatever else
+# answered the request.
+
+_update_state = {"stage": "idle", "pct": 0, "msg": "", "path": ""}
+_update_lock = threading.Lock()
+_update_cache = {"at": 0.0, "data": None}
+
+_UPDATE_ASSET = {"setup": "Aevum-Setup.exe",
+                 "portable": "Aevum.exe",
+                 "appimage": "Aevum-x86_64.AppImage"}
+
+
+def _app_dir() -> str:
+    """Where this copy actually lives — not PyInstaller's extraction dir."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _version_tuple(s: str) -> tuple:
+    """'v1.2.10' -> (1, 2, 10). Anything unreadable sorts oldest."""
+    return tuple(int(n) for n in re.findall(r"\d+", s or "")[:4]) or (0,)
+
+
+def install_kind() -> str:
+    """Which package this copy came from, because each updates differently."""
+    if os.environ.get("APPIMAGE"):
+        return "appimage"
+    if not getattr(sys, "frozen", False):
+        return "source"
+    if _IS_WINDOWS:
+        # Inno leaves its uninstaller beside the exe. A portable copy is alone.
+        return "setup" if os.path.isfile(
+            os.path.join(_app_dir(), "unins000.exe")) else "portable"
+    return "other"
+
+
+def _fetch(url: str, timeout: int = 30):
+    req = urllib.request.Request(
+        url, headers={"User-Agent": f"Aevum/{APP_VERSION}"})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def _latest_release() -> dict:
+    """Newest published release. Cached, so opening Settings twice is free."""
+    now = time.time()
+    if _update_cache["data"] and now - _update_cache["at"] < 900:
+        return _update_cache["data"]
+    with _fetch(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest") as r:
+        data = json.loads(r.read().decode("utf-8", "replace"))
+    _update_cache.update(at=now, data=data)
+    return data
+
+
+def _asset_url(rel: dict, name: str) -> str:
+    for a in rel.get("assets") or []:
+        if a.get("name") == name:
+            return a.get("browser_download_url") or ""
+    return ""
+
+
+def _published_sha(rel: dict, name: str) -> str:
+    """The release's checksums.txt, written as 'name  sha256' per line."""
+    url = _asset_url(rel, "checksums.txt")
+    if not url:
+        return ""
+    with _fetch(url) as r:
+        for line in r.read().decode("utf-8", "replace").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0] == name:
+                return parts[1].lower()
+    return ""
+
+
+def _set_update(**kw):
+    with _update_lock:
+        _update_state.update(kw)
+
+
+def _do_update(rel: dict, kind: str, name: str):
+    """Download, verify, then hand over. Never overwrites a running binary."""
+    tmp = os.path.join(_app_dir(), name + ".part")
+    try:
+        want = _published_sha(rel, name)
+        if not want:
+            _set_update(stage="error", msg="no checksum published for " + name)
+            return
+        _set_update(stage="download", pct=0, msg="")
+        import hashlib
+        h = hashlib.sha256()
+        with _fetch(_asset_url(rel, name), timeout=60) as r, open(tmp, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = r.read(262144)
+                if not chunk:
+                    break
+                f.write(chunk)
+                h.update(chunk)
+                got += len(chunk)
+                if total:
+                    _set_update(pct=min(99, int(got * 100 / total)))
+        if h.hexdigest().lower() != want:
+            os.remove(tmp)
+            _set_update(stage="error", msg="checksum mismatch")
+            return
+
+        final = os.path.join(_app_dir(), name)
+        if kind == "appimage":
+            # Replacing the file a running AppImage was mounted from is safe:
+            # the mount already holds its own copy. It takes effect on the
+            # next launch, which is why this one does not relaunch itself.
+            target = os.environ.get("APPIMAGE") or final
+            os.replace(tmp, target)
+            os.chmod(target, 0o755)
+            _set_update(stage="done", pct=100, path=target)
+            return
+        if os.path.exists(final):
+            os.remove(final)
+        os.replace(tmp, final)
+        if kind == "setup":
+            # The installer replaces the files this process is running from,
+            # so it has to start and then be left alone. Inno upgrades in
+            # place: same AppId, settings and shortcuts survive.
+            subprocess.Popen([final], close_fds=True, env=_clean_env())
+            _set_update(stage="launched", pct=100, path=final)
+            threading.Timer(1.5, lambda: os._exit(0)).start()
+            return
+        # Portable: a running exe cannot replace itself without a helper that
+        # outlives it, and self-replacing binaries are what antivirus heuristics
+        # are built to catch. The new copy lands beside the old one instead and
+        # the folder opens, which is the swap minus the download hunt.
+        _set_update(stage="done", pct=100, path=final)
+        if _IS_WINDOWS:
+            subprocess.Popen(["explorer", "/select,", final], close_fds=True)
+    except Exception as e:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        _set_update(stage="error", msg=str(e)[:120])
+
+
+@app.route("/update/check")
+def update_check():
+    kind = install_kind()
+    try:
+        rel = _latest_release()
+    except Exception:
+        return jsonify({"ok": False, "current": APP_VERSION, "kind": kind})
+    latest = (rel.get("tag_name") or "").lstrip("vV")
+    name = _UPDATE_ASSET.get(kind, "")
+    return jsonify({
+        "ok": True,
+        "current": APP_VERSION,
+        "latest": latest,
+        "newer": _version_tuple(latest) > _version_tuple(APP_VERSION),
+        "kind": kind,
+        "canApply": bool(name and _asset_url(rel, name)),
+        "page": rel.get("html_url") or "",
+    })
+
+
+@app.route("/update/apply", methods=["POST"])
+def update_apply():
+    with _update_lock:
+        if _update_state["stage"] in ("download", "launched"):
+            return jsonify(dict(_update_state))
+    kind = install_kind()
+    name = _UPDATE_ASSET.get(kind, "")
+    if not name:
+        return jsonify({"stage": "error", "msg": "no package for this build"}), 400
+    try:
+        rel = _latest_release()
+    except Exception as e:
+        return jsonify({"stage": "error", "msg": str(e)[:120]}), 502
+    if _version_tuple((rel.get("tag_name") or "").lstrip("vV")) <= _version_tuple(APP_VERSION):
+        return jsonify({"stage": "error", "msg": "already up to date"}), 400
+    _set_update(stage="download", pct=0, msg="", path="")
+    threading.Thread(target=_do_update, args=(rel, kind, name), daemon=True).start()
+    return jsonify(dict(_update_state))
+
+
+@app.route("/update/status")
+def update_status():
+    with _update_lock:
+        return jsonify(dict(_update_state))
 
 
 @app.route("/settings")

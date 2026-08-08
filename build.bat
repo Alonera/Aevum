@@ -15,6 +15,15 @@ if not exist "bin\yt-dlp.exe" echo MISSING: bin\yt-dlp.exe && pause && exit /b 1
 if not exist "bin\ffmpeg.exe" echo MISSING: bin\ffmpeg.exe && pause && exit /b 1
 if not exist "bin\ffprobe.exe" echo MISSING: bin\ffprobe.exe && pause && exit /b 1
 
+REM The updater compares APP_VERSION against the newest release tag, so a
+REM constant left behind would hide a real update or offer one already here.
+REM Refuse to build while the three places disagree.
+for /f "tokens=2 delims== " %%v in ('findstr /b /c:"APP_VERSION = " ytdl_tray.py') do set "PYVER=%%~v"
+for /f "tokens=3" %%v in ('findstr /b /c:"#define AppVersion" installer.iss') do set "ISSVER=%%~v"
+if not "%PYVER%"=="%ISSVER%" echo VERSION MISMATCH: ytdl_tray.py=%PYVER% installer.iss=%ISSVER% && pause && exit /b 1
+findstr /c:"'FileVersion', '%PYVER%.0'" version.txt >nul || (echo VERSION MISMATCH: version.txt is not %PYVER% && pause && exit /b 1)
+echo Version %PYVER% - ytdl_tray.py, installer.iss and version.txt agree.
+
 echo [1/3] Building portable Aevum.exe ...
 python -m PyInstaller --onefile --noconsole --clean --name "Aevum" ^
   --icon "app.ico" --version-file "version.txt" ^
