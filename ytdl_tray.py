@@ -1997,8 +1997,21 @@ def _app_dir() -> str:
 
 
 def _version_tuple(s: str) -> tuple:
-    """'v1.2.10' -> (1, 2, 10). Anything unreadable sorts oldest."""
-    return tuple(int(n) for n in re.findall(r"\d+", s or "")[:4]) or (0,)
+    """'v1.2.10' -> (1, 2, 10). Anything unreadable sorts oldest.
+
+    Reading stops at the first thing that is not part of the number, so
+    1.2.5-rc1 counts as 1.2.5 rather than as four components — otherwise a
+    release candidate outranks the release it is a candidate for, and
+    anyone already on 1.2.5 gets offered a downgrade. Trailing zeros go
+    too, so 1.2.4.0 and 1.2.4 are the same version, which they are.
+    """
+    core = re.match(r"\d+(?:\.\d+)*", (s or "").lstrip("vV"))
+    if not core:
+        return (0,)
+    parts = [int(n) for n in core.group(0).split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
 
 
 def install_kind() -> str:
@@ -2061,6 +2074,34 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
     """Download, verify, then hand over. Never overwrites a running binary."""
     tmp = os.path.join(_app_dir(), name + ".part")
     try:
+        # Ask the folder whether it will take a file before spending ninety
+        # megabytes finding out. A copy installed somewhere read-only fails
+        # here in a sentence the user can act on, rather than at the last
+        # line with a stack error and a path in it.
+        try:
+            probe = os.path.join(_app_dir(), ".aevum-write-test")
+            with open(probe, "wb"):
+                pass
+            os.remove(probe)
+        except OSError:
+            _set_update(stage="error", msg="cannot write to " + _app_dir())
+            return
+
+        # A tar.gz unpacks into a folder named after the incoming version,
+        # and that folder gets cleared first. Should the running copy happen
+        # to live in one already named that — someone who renamed it, most
+        # likely — clearing it would delete the program doing the clearing.
+        # Checked here rather than at the unpack, so it costs nothing
+        # instead of ninety megabytes.
+        if kind == "tarball":
+            here = os.path.abspath(_app_dir())
+            out = os.path.abspath(os.path.join(
+                os.path.dirname(_app_dir()) or ".", f"Aevum-{ver}"))
+            if here == out or here.startswith(out + os.sep):
+                _set_update(stage="error",
+                            msg="the folder for the new version is the one running")
+                return
+
         want = _published_sha(rel, name)
         if not want:
             _set_update(stage="error", msg="no checksum published for " + name)
@@ -2179,21 +2220,28 @@ def update_check():
 
 @app.route("/update/apply", methods=["POST"])
 def update_apply():
-    with _update_lock:
-        if _update_state["stage"] in ("download", "launched"):
-            return jsonify(dict(_update_state))
     kind = install_kind()
     name = _UPDATE_ASSET.get(kind, "")
     if not name:
         return jsonify({"stage": "error", "msg": "no package for this build"}), 400
+    with _update_lock:
+        if _update_state["stage"] in ("download", "launched"):
+            return jsonify(dict(_update_state))
+        # Claim the slot inside the same lock that just tested it. Asking
+        # GitHub for the release takes long enough that a second click, or a
+        # second tab, walks through the gap and starts its own download into
+        # the same part file.
+        _update_state.update(stage="download", pct=0, msg="", path="")
+    def _fail(msg, code):
+        _set_update(stage="error", msg=msg)
+        return jsonify({"stage": "error", "msg": msg}), code
     try:
         rel = _latest_release()
     except Exception as e:
-        return jsonify({"stage": "error", "msg": str(e)[:120]}), 502
+        return _fail(str(e)[:120], 502)
     latest = (rel.get("tag_name") or "").lstrip("vV")
     if _version_tuple(latest) <= _version_tuple(APP_VERSION):
-        return jsonify({"stage": "error", "msg": "already up to date"}), 400
-    _set_update(stage="download", pct=0, msg="", path="")
+        return _fail("already up to date", 400)
     threading.Thread(target=_do_update, args=(rel, kind, name, latest), daemon=True).start()
     return jsonify(dict(_update_state))
 
