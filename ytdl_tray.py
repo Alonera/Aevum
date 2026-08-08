@@ -947,24 +947,23 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
     seconds, and progressive streams (usually 360p only) would just cost
     quality.
     """
-    h = HEIGHT_MAP.get(vq)
-    # Capping height alone throws away every good stream of a portrait video.
-    # A 720x1280 reel is 720p to anyone watching it, but its height is 1280,
-    # so "1080p" excluded the whole DASH ladder and left the small progressive
-    # copy underneath — the quality the user asked for was there and went
-    # unused. Each rung is tried against height first and then against width,
-    # which is the same number for a landscape video and the short side for a
-    # portrait one. On landscape the height rung matches and the width rung
-    # never runs.
-    caps = [f"[height<={h}]", f"[width<={h}]"] if h else [""]
-
+    # No size filter here at all — build_format_sort() decides the size.
+    #
+    # A filter cannot say what "1080p" means. [height<=1080] reads as 1080p
+    # only while the video is wider than it is tall. On a 1080x1920 short it
+    # matches the 480x854 rung instead, because 854 is under 1080, and the
+    # user who asked for 1080p is handed 480p without a word. Adding a width
+    # rung after it did not help: the height rung already matched, so the
+    # chain stopped there. Measured on a real vertical video — 1080p gave
+    # 480x854 and 720p gave 360x640.
+    #
+    # yt-dlp's "res" sort key is the smaller of the two dimensions, which is
+    # exactly what a person means by 1080p, on either orientation. So the
+    # chains below choose the codec and the container, and the sort chooses
+    # the size.
     def chain(*rungs, tail="best"):
-        """Every rung against each cap in turn, then one uncapped fallback.
-
-        Rung first, cap second: a portrait video has to reach the good
-        stream through its width before the chain drops to a lesser rung.
-        """
-        return "/".join([r.replace("{c}", c) for r in rungs for c in caps] + [tail])
+        """Rungs in order of preference, then one unfiltered fallback."""
+        return "/".join([r.replace("{c}", "") for r in rungs] + [tail])
 
     if mute:
         # video only
@@ -1011,15 +1010,25 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
     return chain("bestvideo{c}+bestaudio", "best{c}")
 
 
-def build_format_sort(container: str) -> str:
-    """MP4's tie-break: keep the resolution, prefer H.264 where there's a choice.
+def build_format_sort(vq: str, container: str) -> str:
+    """Which stream wins, once the chains have said which ones are eligible.
 
-    A preference chain cannot say this. "Prefer avc1" inside a [height<=2160]
-    window matches the 1080p H.264 stream and silently caps a 4K download at
-    1080p. Sorting picks the resolution first and only then decides between
-    codecs that are otherwise equal.
+    "res" is yt-dlp's name for the smaller of a stream's two dimensions,
+    so res:1080 means 1080p to a viewer whichever way the video is turned —
+    1920x1080 and 1080x1920 both qualify. Giving it a value asks for the
+    closest match at or below it, which is what a quality chip means.
+
+    MP4 adds a codec tie-break after that. It has to come second: put the
+    codec first and a 4K download settles for the 1080p H.264 stream,
+    because H.264 is where the sites stop.
     """
-    return "res,vcodec:avc1" if container == "mp4" else ""
+    keys = []
+    h = HEIGHT_MAP.get(vq)
+    if h:
+        keys.append(f"res:{h}")
+    if container == "mp4":
+        keys.append("vcodec:avc1")
+    return ",".join(keys)
 
 
 def _parse_timestamp(text: str):
@@ -1141,7 +1150,7 @@ def build_cmd(data: dict, output_dir: str) -> list:
         cont = data.get("cont", "mp4")
         mute = bool(data.get("mute", False))
         fmt  = build_video_format(vq, cont, mute)
-        sort = build_format_sort(cont)
+        sort = build_format_sort(vq, cont)
         # UI values -> real container names (mp4h264 is an mp4 on disk)
         merge_container = {"mp4h264": "mp4"}.get(cont, cont)
         # Naming a second container lets yt-dlp keep the streams it found and
