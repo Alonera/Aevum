@@ -910,13 +910,18 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
         # Both spellings matter: YouTube reports "vp9", while sites serving
         # VP9 inside an mp4 report "vp09.00.31..." and the old ^=vp9 test
         # quietly missed every one of them.
-        # The audio has to be something webm can actually hold. Pairing a
-        # VP9 stream with the AAC track sitting next to it on Instagram
-        # builds a command ffmpeg cannot finish — the merge dies on
-        # "Conversion failed!" and leaves the part files behind. Sites that
-        # offer no Opus or Vorbis fall through to the plain best instead.
+        # Webm-legal pairings first: a webm holds VP8/VP9/AV1 beside Opus or
+        # Vorbis and nothing else, and asking ffmpeg for anything wider ends
+        # the merge on "Conversion failed!". The rungs below that one are for
+        # sites carrying no such pairing — Vimeo's HLS is H.264 and AAC all
+        # the way down, and it publishes video and audio separately, so a
+        # chain ending at "best" found nothing at all and the download died.
+        # build_cmd names mkv as the second container, which is what those
+        # last two rungs land in.
         return (f"bestvideo{hc}[ext=webm]+bestaudio[ext=webm]/"
                 f"bestvideo{hc}[vcodec~='^vp0?9']+bestaudio[acodec~='^(opus|vorbis)']/"
+                f"bestvideo{hc}[vcodec~='^vp0?9']+bestaudio/"
+                f"bestvideo{hc}+bestaudio/"
                 f"best{hc}/best")
     return f"bestvideo{hc}+bestaudio/best{hc}/best"
 
@@ -1039,7 +1044,14 @@ def build_cmd(data: dict, output_dir: str) -> list:
         sort = build_format_sort(cont)
         # UI values -> real container names (mp4h264 is an mp4 on disk)
         merge_container = {"mp4h264": "mp4"}.get(cont, cont)
-        cmd += ["-f", fmt, "--merge-output-format", merge_container]
+        # Naming a second container lets yt-dlp keep the streams it found and
+        # pick something that fits them. Only webm needs it: it accepts one
+        # narrow set of codecs, and on sites offering nothing from that set
+        # the merge used to fail outright rather than fall back. mkv takes
+        # anything. merge_container stays the plain name below, because the
+        # subtitle format and the clip encoder both branch on it.
+        merge_arg = "webm/mkv" if merge_container == "webm" else merge_container
+        cmd += ["-f", fmt, "--merge-output-format", merge_arg]
         if sort:
             cmd += ["-S", sort]
         if is_clip_dl and not clip_lossless:
