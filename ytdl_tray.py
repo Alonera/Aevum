@@ -995,9 +995,14 @@ def build_cmd(data: dict, output_dir: str) -> list:
         # Thumbnail selected: give this download its own folder so the video
         # and its cover image don't clutter the main folder alongside others.
         # The folder stays unsuffixed so two versions of one video share it.
+        # This is the one layout that spends the title twice, once on the
+        # folder and again on the file, so a long title used to push the
+        # whole path past the 260 characters Windows will open — the
+        # download failed on a path nobody could see. Half the budget each
+        # keeps the worst case inside it.
         out = os.path.join(output_dir,
-                           "%(title).150B [%(id)s]",
-                           f"%(title).150B [%(id)s]{vtag}.%(ext)s")
+                           "%(title).90B [%(id)s]",
+                           f"%(title).90B [%(id)s]{vtag}.%(ext)s")
     else:
         out = os.path.join(output_dir, f"%(title).180B [%(id)s]{vtag}.%(ext)s")
 
