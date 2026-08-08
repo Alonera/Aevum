@@ -897,17 +897,34 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
     quality.
     """
     h = HEIGHT_MAP.get(vq)
-    hc = f"[height<={h}]" if h else ""
+    # Capping height alone throws away every good stream of a portrait video.
+    # A 720x1280 reel is 720p to anyone watching it, but its height is 1280,
+    # so "1080p" excluded the whole DASH ladder and left the small progressive
+    # copy underneath — the quality the user asked for was there and went
+    # unused. Each rung is tried against height first and then against width,
+    # which is the same number for a landscape video and the short side for a
+    # portrait one. On landscape the height rung matches and the width rung
+    # never runs.
+    caps = [f"[height<={h}]", f"[width<={h}]"] if h else [""]
+
+    def chain(*rungs, tail="best"):
+        """Every rung against each cap in turn, then one uncapped fallback.
+
+        Rung first, cap second: a portrait video has to reach the good
+        stream through its width before the chain drops to a lesser rung.
+        """
+        return "/".join([r.replace("{c}", c) for r in rungs for c in caps] + [tail])
+
     if mute:
         # video only
-        return f"bestvideo{hc}/best{hc}/best"
+        return chain("bestvideo{c}", "best{c}")
     if container == "mp4":
         # A container choice, not a codec one. The avc1 tie-break lives in
         # build_format_sort() instead, so 1080p lands on H.264 without
         # capping 4K, where AV1 is all the sites make.
-        return (f"bestvideo{hc}[ext=mp4]+bestaudio[ext=m4a]/"
-                f"bestvideo{hc}+bestaudio/"
-                f"best{hc}/best")
+        return chain("bestvideo{c}[ext=mp4]+bestaudio[ext=m4a]",
+                     "bestvideo{c}+bestaudio",
+                     "best{c}")
     if container == "mp4h264":
         # The only option that promises a codec, so every rung has to keep
         # that promise. An [ext=mp4] rung used to sit second in this chain
@@ -917,11 +934,11 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
         # Instagram's progressive streams really are avc1, but report both
         # their codec and their height as unknown, so every filtered rung
         # above steps over them.
-        return (f"bestvideo{hc}[vcodec^=avc1]+bestaudio[ext=m4a]/"
-                f"bestvideo{hc}[vcodec^=avc1]+bestaudio/"
-                f"best{hc}[vcodec^=avc1]/"
-                f"best{hc}[ext=mp4]/"
-                f"best[ext=mp4]")
+        return chain("bestvideo{c}[vcodec^=avc1]+bestaudio[ext=m4a]",
+                     "bestvideo{c}[vcodec^=avc1]+bestaudio",
+                     "best{c}[vcodec^=avc1]",
+                     "best{c}[ext=mp4]",
+                     tail="best[ext=mp4]")
     if container == "webm":
         # user preference: VP9 quality; webm-native streams first.
         # Both spellings matter: YouTube reports "vp9", while sites serving
@@ -935,12 +952,12 @@ def build_video_format(vq: str, container: str, mute: bool) -> str:
         # chain ending at "best" found nothing at all and the download died.
         # build_cmd names mkv as the second container, which is what those
         # last two rungs land in.
-        return (f"bestvideo{hc}[ext=webm]+bestaudio[ext=webm]/"
-                f"bestvideo{hc}[vcodec~='^vp0?9']+bestaudio[acodec~='^(opus|vorbis)']/"
-                f"bestvideo{hc}[vcodec~='^vp0?9']+bestaudio/"
-                f"bestvideo{hc}+bestaudio/"
-                f"best{hc}/best")
-    return f"bestvideo{hc}+bestaudio/best{hc}/best"
+        return chain("bestvideo{c}[ext=webm]+bestaudio[ext=webm]",
+                     "bestvideo{c}[vcodec~='^vp0?9']+bestaudio[acodec~='^(opus|vorbis)']",
+                     "bestvideo{c}[vcodec~='^vp0?9']+bestaudio",
+                     "bestvideo{c}+bestaudio",
+                     "best{c}")
+    return chain("bestvideo{c}+bestaudio", "best{c}")
 
 
 def build_format_sort(container: str) -> str:
@@ -1440,7 +1457,14 @@ def _summarize_video_info(info, in_playlist: bool) -> dict:
         approx = not f.get("filesize")
         vcodec = f.get("vcodec")
         acodec = f.get("acodec")
-        height = f.get("height")
+        width  = f.get("width")
+        raw_h  = f.get("height")
+        # The short side is what "720p" means to whoever is watching. Going
+        # by height alone filed a 720x1280 reel under 1440p, so the chips
+        # offered qualities the video never had and dimmed the one it did —
+        # and the same number decides the H.264 notice, which has to agree
+        # with what build_video_format will actually pick.
+        height = min(raw_h, width) if raw_h and width else raw_h
 
         # The same two rules the H.264 chain in build_video_format runs on,
         # so the warning and the download can never disagree. An mp4 that
