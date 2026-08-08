@@ -84,6 +84,33 @@ _CLIENT_STALE = 90   # s — a tab silent for this long counts as dead
                      #     (a throttled background tab still pings ~every 60s)
 
 
+# Only the page Aevum itself opened may talk to this server. A browser will
+# send a page's requests to the loopback address without complaint — either
+# because a hostile site pointed its own name at 127.0.0.1 (DNS rebinding),
+# or by aiming a request straight at the port. Two headers give it away and
+# neither can be forged from script: Host is the name the page was loaded
+# under, Origin is stamped by the browser.
+#
+# Without this /download is the prize, not the updater: its "dir" comes
+# straight from the request, so a foreign page could pick the folder it
+# writes into.
+def _is_local_host(host: str) -> bool:
+    # PORT is settled at startup (find_free_port), so read it per request
+    return host in (f"localhost:{PORT}", f"127.0.0.1:{PORT}")
+
+
+@app.before_request
+def _reject_foreign_callers():
+    if not _is_local_host(request.host):
+        return "forbidden", 403
+    origin = request.headers.get("Origin")
+    # Absent on plain navigation; present on every fetch the page makes
+    if origin and not _is_local_host(origin.split("//", 1)[-1]):
+        return "forbidden", 403
+
+
+# Registered after the guard on purpose: a rejected request is not the page,
+# and must not count as a sign of life (on Linux that keeps the app alive).
 @app.before_request
 def _touch_last_seen():
     global _last_seen, _page_seen
