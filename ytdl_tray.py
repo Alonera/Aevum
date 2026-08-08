@@ -764,10 +764,10 @@ function setMode(m){const vr=document.getElementById('vrows'),ar=document.getEle
 // Download while one is busy adds the next link to the queue instead of
 // being locked out; the panel below shows every entry with its own bar.
 function go(){const url=inp.value.trim();if(!url||gb.disabled)return;const dir=document.getElementById('dir').value.trim();const clipStart=document.getElementById('clipStart').value.trim();const clipEnd=document.getElementById('clipEnd').value.trim();pw.classList.add('show');pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';fetch('/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,...state,dir,clipStart,clipEnd})}).then(r=>r.json()).then(()=>{inp.value='';inp.dispatchEvent(new Event('input'));refresh();}).catch(()=>{pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';});}
-function cancelJob(){if(!jobId)return;stopbtn.classList.remove('show');pt.textContent=T('stopping');pt.style.color='rgba(255,150,90,0.9)';fetch('/cancel/'+jobId,{method:'POST'}).then(()=>refresh());}
+function cancelJob(){if(!jobId)return;stopbtn.classList.remove('show');pt.textContent=T('stopping');pt.style.color='rgba(255,150,90,0.9)';fetch('/cancel/'+jobId,{method:'POST',headers:{'X-Aevum':'1'}}).then(()=>refresh());}
 // Same endpoint for a job that has not started: the server retires it
 // without a process to kill, so it just leaves the queue.
-function dropJob(id){fetch('/cancel/'+id,{method:'POST'}).then(()=>refresh());}
+function dropJob(id){fetch('/cancel/'+id,{method:'POST',headers:{'X-Aevum':'1'}}).then(()=>refresh());}
 function startPolling(){if(!pollTimer)pollTimer=setInterval(refresh,700);}
 function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
 // One poll drives everything: the main bar follows whichever job is
@@ -1835,6 +1835,12 @@ def status_route(job_id):
 
 @app.route("/cancel/<job_id>", methods=["POST"])
 def cancel_route(job_id):
+    # Same shape as /update/apply: a POST with no body is a CORS simple
+    # request, so any page open in the browser can reach it. Stopping a
+    # download is a smaller thing to have done to you than running an
+    # installer, but there is no reason to leave it open either.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
     with jobs_lock:
         job = jobs.get(job_id)
         if not job:
