@@ -2055,7 +2055,7 @@ def _set_update(**kw):
         _update_state.update(kw)
 
 
-def _do_update(rel: dict, kind: str, name: str):
+def _do_update(rel: dict, kind: str, name: str, ver: str):
     """Download, verify, then hand over. Never overwrites a running binary."""
     tmp = os.path.join(_app_dir(), name + ".part")
     try:
@@ -2083,20 +2083,23 @@ def _do_update(rel: dict, kind: str, name: str):
             _set_update(stage="error", msg="checksum mismatch")
             return
 
-        final = os.path.join(_app_dir(), name)
         if kind == "appimage":
             # Replacing the file a running AppImage was mounted from is safe:
             # the mount already holds its own copy. It takes effect on the
             # next launch, which is why this one does not relaunch itself.
-            target = os.environ.get("APPIMAGE") or final
+            target = os.environ.get("APPIMAGE") or os.path.join(_app_dir(), name)
             os.replace(tmp, target)
             os.chmod(target, 0o755)
             _set_update(stage="done", pct=100, path=target)
             return
-        if os.path.exists(final):
-            os.remove(final)
-        os.replace(tmp, final)
+
         if kind == "setup":
+            # Named after the version so a half-finished download from an
+            # earlier attempt can never be the thing that gets launched.
+            final = os.path.join(_app_dir(), f"Aevum-Setup-{ver}.exe")
+            if os.path.exists(final):
+                os.remove(final)
+            os.replace(tmp, final)
             # The installer replaces the files this process is running from,
             # so it has to start and then be left alone. Inno upgrades in
             # place: same AppId, settings and shortcuts survive.
@@ -2104,13 +2107,23 @@ def _do_update(rel: dict, kind: str, name: str):
             _set_update(stage="launched", pct=100, path=final)
             threading.Timer(1.5, lambda: os._exit(0)).start()
             return
-        # Portable: a running exe cannot replace itself without a helper that
-        # outlives it, and self-replacing binaries are what antivirus heuristics
-        # are built to catch. The new copy lands beside the old one instead and
-        # the folder opens, which is the swap minus the download hunt.
+
+        # Portable. The version goes in the name for a plain reason: the asset
+        # is called Aevum.exe and so is the exe this process is running from,
+        # so writing it under its own name would mean deleting ourselves —
+        # which Windows refuses, and the update would fail every time.
+        # Replacing a running exe needs a helper that outlives it, and
+        # self-replacing binaries are what antivirus heuristics are built to
+        # catch, so the new copy lands beside the old one and the folder
+        # opens on it: the swap, minus hunting for the download.
+        stem, ext = os.path.splitext(name)
+        final = os.path.join(_app_dir(), f"{stem}-{ver}{ext}")
+        if os.path.exists(final):
+            os.remove(final)
+        os.replace(tmp, final)
         _set_update(stage="done", pct=100, path=final)
         if _IS_WINDOWS:
-            subprocess.Popen(["explorer", "/select,", final], close_fds=True)
+            subprocess.Popen(["explorer", f"/select,{final}"], close_fds=True)
     except Exception as e:
         try:
             if os.path.exists(tmp):
@@ -2153,10 +2166,11 @@ def update_apply():
         rel = _latest_release()
     except Exception as e:
         return jsonify({"stage": "error", "msg": str(e)[:120]}), 502
-    if _version_tuple((rel.get("tag_name") or "").lstrip("vV")) <= _version_tuple(APP_VERSION):
+    latest = (rel.get("tag_name") or "").lstrip("vV")
+    if _version_tuple(latest) <= _version_tuple(APP_VERSION):
         return jsonify({"stage": "error", "msg": "already up to date"}), 400
     _set_update(stage="download", pct=0, msg="", path="")
-    threading.Thread(target=_do_update, args=(rel, kind, name), daemon=True).start()
+    threading.Thread(target=_do_update, args=(rel, kind, name, latest), daemon=True).start()
     return jsonify(dict(_update_state))
 
 
