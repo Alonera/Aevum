@@ -4,6 +4,9 @@
 
 **Free, open source, and completely ad-free** — no ads, no tracking, no bundled extras. Just the download.
 
+> **Aevum runs on your machine. It contacts one outside address, and only for updates.**
+> Downloading is entirely local — Aevum talks to the video sites you paste and nowhere else, and your files and history never leave your computer. The single exception: when you open **Settings**, it asks GitHub what the newest release is, because a program cannot know it is out of date without asking. That request carries nothing about you or what you have downloaded — it is the same public read as opening this page in a browser. Never open Settings and it never asks. No analytics, no accounts, no telemetry, nothing reported to the developer. [Details](#is-it-safe--privacy)
+
 ![Aevum](docs/screenshot.png)
 
 ## Download
