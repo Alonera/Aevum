@@ -1372,9 +1372,14 @@ def _fix_quality_in_name(path: str) -> str:
     # "Epic 1920p Edit" had its title edited instead of its tag.
     folder, name = os.path.split(path)
     head, ext = os.path.splitext(name)
-    m = re.search(r"\[[A-Za-z0-9_-]{6,}\]", head)
-    if not m:
+    # The last bracket, not the first: a title carrying its own "[Official]"
+    # would otherwise be taken for the id and the tag written into the middle
+    # of it. The template puts [%(id)s] after the title and the vtag has no
+    # brackets in it, so the id is always the one at the end.
+    ids = list(re.finditer(r"\[[A-Za-z0-9_-]{6,}\]", head))
+    if not ids:
         return path
+    m = ids[-1]
     want, tail = f" {short}p", head[m.end():]
     tail = (re.sub(r"^ \d+p", want, tail, count=1)
             if re.match(r"^ \d+p", tail) else want + tail)
