@@ -46,7 +46,7 @@ H.264 stops at 1080p because that is where the sites stop making it. Above 1080p
 
 ## Under the hood
 
-- **ffprobe ships now.** yt-dlp reads a finished file's metadata through it, and without it `--add-metadata` gave up with "ffprobe not found" on some sites — a warning you never saw, and metadata that never arrived. It comes from the same archive as the bundled ffmpeg, so the two are the same build. It costs about 34 MB in the download.
+- **ffprobe ships now.** yt-dlp reads a finished file's metadata through it, and without it `--add-metadata` gave up with "ffprobe not found" on some sites — a warning you never saw, and metadata that never arrived. It comes from the same archive as the bundled ffmpeg, so the two are the same build. It adds about 24 MB to the installer download and about 34 MB to the portable one, and takes about 94 MB on disk.
 
 - **Stop, and quitting, could hang.** Ending a download kills the process tree with `taskkill`, and nothing put a limit on how long that was allowed to take — it can sit there indefinitely when the process it is ending is stuck waiting on a driver. Closing Aevum went the same way, because it stops running jobs on the way out. It gives up after fifteen seconds now and carries on.
 
