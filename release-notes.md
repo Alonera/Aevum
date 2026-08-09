@@ -24,6 +24,8 @@ What the format buttons actually give you, and a way to update without going and
 
 - **WebM's VP9 test was written wrong.** It matched `vp9` but not `vp09`, which is how sites serving VP9 inside an mp4 spell it. Correcting the test on its own would have made things worse: pairing one of those streams with the AAC track sitting beside it asks for a file ffmpeg cannot build, and the download dies at the merge with part files left behind. WebM now also insists on audio a WebM can legally carry, and steps aside on sites that have none.
 
+- **Any page open in your browser could talk to Aevum.** The window you use is served on a local port, and nothing in the app looked at where a request had come from — a site you happened to be visiting could aim one at that port, and the download request carries the folder to write into. Aevum answers only the page it opened itself now, and turns away anything arriving under another name or from another origin.
+
 ## New
 
 - **Aevum can update itself.** Settings names the version you are running and looks for a newer one when you open the panel — not at launch, because a download tool has no business phoning home before it is asked. When there is one, the button fetches it, checks it against the SHA-256 the release publishes, and hands over. Each of the four packages knows how to replace itself: the installed build starts the installer and closes, an AppImage overwrites itself, a portable copy lands beside the old one with the folder open, and a tar.gz unpacks into a versioned folder next to the one you are running so the working copy stays working. Nothing is opened that does not match its published hash, and a file that fails the check is deleted rather than left lying around.
@@ -45,5 +47,7 @@ H.264 stops at 1080p because that is where the sites stop making it. Above 1080p
 ## Under the hood
 
 - **ffprobe ships now.** yt-dlp reads a finished file's metadata through it, and without it `--add-metadata` gave up with "ffprobe not found" on some sites — a warning you never saw, and metadata that never arrived. It comes from the same archive as the bundled ffmpeg, so the two are the same build. It costs about 34 MB in the download.
+
+- **Stop, and quitting, could hang.** Ending a download kills the process tree with `taskkill`, and nothing put a limit on how long that was allowed to take — it can sit there indefinitely when the process it is ending is stuck waiting on a driver. Closing Aevum went the same way, because it stops running jobs on the way out. It gives up after fifteen seconds now and carries on.
 
 - The guide panel said MP4 "plays everywhere" and called H.264 a guarantee. Neither was true. Both now describe what the buttons actually do, in all eight languages, and MP4 and MKV have the tooltips they were missing.
