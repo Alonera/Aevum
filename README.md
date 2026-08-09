@@ -32,7 +32,7 @@ You only need to do this once.
 ### Is it safe? / Privacy
 
 - **Open source** — all the code is in this repository; you can read exactly what it does.
-- **Runs 100% locally** — Aevum only talks to the video sites you paste. It has no analytics, no accounts, no telemetry; nothing is sent to the developer.
+- **Talks to two things, and you can name both** — the video sites you paste, and, from 1.2.5, GitHub. Opening Settings makes one HTTPS request to `api.github.com` asking what this repository's newest release is; that is how the version line knows whether you are behind. It happens when you open that panel, never at launch and never in the background, and the answer is reused for fifteen minutes. Nothing about you or about what you have downloaded goes with it — it is the same public read as loading the releases page in a browser. There are no analytics, no accounts and no telemetry, and nothing is reported to the developer. If you would rather it never asked, simply don't open Settings; downloading never contacts GitHub.
 - **Verify your download** — each release includes `checksums.txt` (SHA‑256). You can confirm the file you downloaded matches. A VirusTotal scan link is provided in the release notes.
 
 ## Features
@@ -47,7 +47,7 @@ You only need to do this once.
 - **Login-only content** — use your browser's cookies to download from sites where you're signed in (your own account). Firefox works. Chrome, Edge and Brave no longer hand their cookies to any other program, Chrome's own change, and nothing outside Chrome can undo it.
 - **Queue** — press Download while one is running and the next link lines up behind it. Every entry gets its own row with the size, speed and time left, and you can drop one back out of the queue.
 - **Stop button** — cancel the running download at any time.
-- **Updates itself** — Settings names the version you are running and checks for a newer one when you open it. What it fetches is checked against the SHA-256 the release publishes before anything is opened.
+- **Updates itself** — Settings names the version you are running and asks GitHub for the newest one when you open the panel. That check is a network request; it is the only one Aevum makes that is not to a site you pasted. What it fetches is checked against the SHA-256 the release publishes before anything is opened.
 - **8 languages** — English, Türkçe, Español, Deutsch, Français, Italiano, Português, Русский. Your choice is remembered.
 - **Self-contained** — yt-dlp, FFmpeg and ffprobe are bundled; nothing else to install.
 - **No ads, no tracking** — no adware, no bundled toolbars, no telemetry. Everything runs locally.
