@@ -1,53 +1,29 @@
-# Aevum 1.2.5
+# Aevum 1.2.6
 
-What the format buttons actually give you, and a way to update without going and fetching it.
+Downloads that failed with "403 Forbidden", and a way to fix the next one of these without waiting for a release.
 
 ## Fixed
 
-- **H.264 did not always give you H.264.** When a site had no H.264 stream at the size you asked for, the chain fell back to matching on the container instead of the codec — and an `.mp4` says nothing about what is inside it. VP9 and AV1 came straight through that gap, the exact files the button exists to avoid. Editors played them with sound and no picture, or refused them outright. Every rung of that chain checks the codec now.
+- **Downloads failed with `HTTP Error 403: Forbidden`, some of the time.** Nothing was wrong with your connection or with the video. YouTube hands out an address for the file and then refuses that same address, sometimes before the first byte and sometimes a third of the way in. It is the refusal of one address, not of you: ask again and the next one usually works.
 
-  If you downloaded for editing before this release, the files may not be what the button said. VLC's codec panel, or `ffprobe`, will tell you in a second.
+  What made it show up now is that there was only one way in left. yt-dlp reaches YouTube by presenting itself as one of several apps, and for a lot of videos every one of those doors had closed except a single one, which is the one being refused at random. Measured on the version 1.2.5 shipped: four of six downloads of the same video failed, and every other door reported no formats at all or a DRM wall.
 
-- **H.264 also gave up too early.** Some sites serve real H.264 but report the codec as unknown, and the filtered rungs stepped right over it — on Instagram the button failed outright while a working H.264 stream sat there the whole time. It finds those now, and those downloads need no converting afterwards.
+  Two things changed. Aevum now tries a failed download again, up to three times, because a fresh attempt asks for a fresh address; on the old yt-dlp that took the failure rate of a single attempt from 29% to none in ten downloads of a small file. And the yt-dlp inside this build knows a door that did not exist in the last one, which fetches the video in pieces rather than one long stream and never meets the refusal at all: eighteen downloads, none failed.
 
-- **MP4 handed editors AV1 at 1080p.** Not only at 4K, at 1080p too: the AV1 stream outranks the H.264 one in the default sort, so the button labelled as the safe default was quietly the worst choice for anyone editing. MP4 prefers H.264 wherever a site offers the choice now, and still reaches 4K where AV1 is all there is.
+  Retrying is a safety net, not the cure. On a large file three attempts still are not always enough, which is why the copy of yt-dlp matters and why the next item exists.
 
-- **MP4 and MKV were the same button.** On every site tested they resolved to the same stream and differed only in the file extension. Now that MP4 prefers H.264, MKV is what it always said it was: any codec, the best the site has, good for archiving.
-
-- **Chrome cookies failed with a line nobody could act on.** From Chrome 127 the key to the cookie jar is tied to Chrome's own binary, so no other program can open it — including this one. All you saw was `Failed to decrypt with DPAPI`. Aevum says what actually happened now, and which browser still works: Firefox does, Edge and Brave are Chrome underneath and do not.
-
-- **Vimeo links did not work at all.** Vimeo revoked the anonymous tokens yt-dlp signs in with, so every `vimeo.com/…` link answered 401 and stopped there. The same video opens through Vimeo's player URL with no account, and that is where plain Vimeo links go now. Channel, showcase and unlisted links are left alone — they carry parts of the address the player URL would drop.
-
-- **WebM gave up on sites that have no WebM in them.** Vimeo serves H.264 and AAC, separately, and nothing else; there was no rung in the WebM chain for that and the download ended on "Requested format is not available". It falls back now, and lands in an mkv where a webm cannot hold what the site offered.
-
-- **Downloading with the thumbnail on could fail on a path you never saw.** That layout writes the title twice, once as the folder and again as the file inside it, and a long title pushed the whole path past the 260 characters Windows will open. Both halves are shorter now.
-
-- **WebM's VP9 test was written wrong.** It matched `vp9` but not `vp09`, which is how sites serving VP9 inside an mp4 spell it. Correcting the test on its own would have made things worse: pairing one of those streams with the AAC track sitting beside it asks for a file ffmpeg cannot build, and the download dies at the merge with part files left behind. WebM now also insists on audio a WebM can legally carry, and steps aside on sites that have none.
-
-- **Any page open in your browser could talk to Aevum.** The window you use is served on a local port, and nothing in the app looked at where a request had come from — a site you happened to be visiting could aim one at that port, and the download request carries the folder to write into. Aevum answers only the page it opened itself now, and turns away anything arriving under another name or from another origin.
+- **The error said nothing you could act on.** `HTTP Error 403: Forbidden` is a line for someone reading a server log. When a download is refused three times in a row Aevum now says the site turned it down and points at where to fix it. Downloads that fail for a reason trying again cannot mend — a private video, a format the site does not have — are not retried and say what they always said, so a hopeless download still fails as fast as it used to.
 
 ## New
 
-- **Aevum can update itself.** Settings names the version you are running and looks for a newer one when you open the panel — not at launch, because a download tool has no business phoning home before it is asked. When there is one, the button fetches it, checks it against the SHA-256 the release publishes, and hands over. Each of the four packages knows how to replace itself: the installed build starts the installer and closes, an AppImage overwrites itself, a portable copy lands beside the old one with the folder open, and a tar.gz unpacks into a versioned folder next to the one you are running so the working copy stays working. Nothing is opened that does not match its published hash, and a file that fails the check is deleted rather than left lying around.
+- **Packages, in Settings.** A second line under the version, with its own button. It updates yt-dlp, which is the part of Aevum that goes out of date on its own: the sites keep changing and it keeps up, usually within days, while a release here takes weeks. Until now the copy inside the package was the only one Aevum would use, so a fix that already existed still meant waiting for a whole new download of Aevum. Now it does not.
 
-- **A word before you download.** Choose H.264 for a video whose H.264 stops below the size you asked for, and Aevum says so before the download starts rather than quietly handing back less. It also says when a site keeps its codecs to itself — H.264 is usually there and usually found, but not promised — and warns outright when a video has no H.264 at all, where the closest thing to it is whatever happens to be sitting in an mp4.
+  The updated copy goes into your own folder — `%APPDATA%\Aevum\bin` on Windows, `~/.config/aevum/bin` elsewhere — and Aevum prefers it over the bundled one. Nothing else is written and no installer runs. yt-dlp verifies its own download against the hash it publishes; if the result will not run, the old one is put back. "back to the bundled version" undoes the whole thing by deleting one file.
 
-- **Errors worth reading.** "Requested format is not available" was the whole message when the H.264 option refused rather than hand back a codec it had not promised. It says which choice could not be met now.
+  Checking is a network request, like the version check above it, and it happens for the same reason and under the same rule: only when you open Settings, never at launch. Details are in SECURITY.md.
 
 ## Changed
 
-- **Asking for 1080p on a vertical video handed back 480p.** A filter reading `height <= 1080` means 1080p only while a video is wider than it is tall; on a 1080x1920 short it matched the 480x854 stream instead, because 854 is under 1080, and stopped there. Quality is chosen by the short side now — the number a person means by 1080p, whichever way the video is turned — so a vertical 1080p is 1080x1920 and a vertical 720p is 720x1280. Landscape selection is unchanged at every step.
+- **The bundled yt-dlp now comes from the nightly channel.** Not a taste for the bleeding edge, a look at the calendar: stable releases have come 25 to 84 days apart, and on the day this was built the newest stable was six weeks old and could not download from YouTube at all. Nightly builds come from the same tree and the same tests, a day behind the fix instead of weeks. The in-app updater follows the same channel, and one click goes back to the copy this build shipped with.
 
-- **Downloads carry their quality in the name.** `Big Buck Bunny [aqz-KE-bpKQ] 1080p.mp4`. Two qualities of the same video used to resolve to one filename: the second download found the file already sitting there, skipped it, and reported success while the first file stayed put. You could ask for 1080p, be handed nothing, and keep the 720p you already had without ever being told. H.264 adds its own name on top — it writes `.mp4` files exactly like MP4 does, and an extension cannot tell those two apart. MKV and WebM say what they are in the extension already and add nothing. The number is the short side, so it agrees with the chip that was clicked: a 1080x1920 short is 1080p, not 1920p. It is read back off the finished file once there is one, which is also how a video whose site reported no size at all still ends up labelled. Audio downloads keep their plain name.
-
-## H.264 and 4K
-
-H.264 stops at 1080p because that is where the sites stop making it. Above 1080p you get VP9 or AV1, and editors open neither — After Effects refuses AV1 outright and imports VP9 with sound but no picture. There is no 4K H.264 to fetch, by Aevum or anything else. If you need 4K in an editor, download it and convert it yourself.
-
-## Under the hood
-
-- **ffprobe ships now.** yt-dlp reads a finished file's metadata through it, and without it `--add-metadata` gave up with "ffprobe not found" on some sites — a warning you never saw, and metadata that never arrived. It comes from the same archive as the bundled ffmpeg, so the two are the same build. It adds about 44 MB to the Windows downloads and takes about 94 MB on disk.
-
-- **Stop, and quitting, could hang.** Ending a download kills the process tree with `taskkill`, and nothing put a limit on how long that was allowed to take — it can sit there indefinitely when the process it is ending is stuck waiting on a driver. Closing Aevum went the same way, because it stops running jobs on the way out. It gives up after fifteen seconds now and carries on.
-
-- The guide panel said MP4 "plays everywhere" and called H.264 a guarantee. Neither was true. Both now describe what the buttons actually do, in all eight languages, and MP4 and MKV have the tooltips they were missing.
+- ffmpeg is deliberately **not** part of this. It is pinned at 8.0 because 8.1.x hangs forever on googlevideo and takes clip downloads with it. It does not argue with the sites, so it does not go stale, and updating it on its own would only reopen a bug we already closed.

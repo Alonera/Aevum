@@ -43,6 +43,26 @@ From 1.2.5 Aevum can fetch its own next release. Worth knowing about it:
   release yourself against `checksums.txt` is the same check, done by hand.
 - Nothing is downloaded or launched without you pressing the button.
 
+## Updating yt-dlp
+
+From 1.2.6 the Packages line in Settings updates the copy of yt-dlp Aevum uses.
+It is the piece that goes out of date on its own, because the sites keep
+changing and it has to keep up. The same rules apply, with two differences:
+
+- **It is a second network request, to a second repository.** Opening Settings
+  asks `https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest`
+  for the newest build alongside the check for Aevum's own release. Same shape as
+  the other: a public read, nothing about you attached, cached for fifteen minutes,
+  and only when the panel is open.
+- **yt-dlp updates itself.** Pressing the button copies the bundled binary into
+  your own folder — `%APPDATA%\Aevum\bin` on Windows, `~/.config/aevum/bin`
+  elsewhere — and runs its own updater, which verifies the download against the
+  hash yt-dlp publishes. Aevum then prefers that copy over the one inside the
+  package. If the new copy will not run, the old one is put back.
+- Nothing outside that one folder is written, and no installer runs.
+- **Back out with one click.** "back to the bundled version" deletes that file, and
+  Aevum returns to the yt-dlp it shipped with.
+
 ## Supported versions
 
 The latest release receives fixes.
