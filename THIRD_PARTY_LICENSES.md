@@ -15,7 +15,9 @@ this project's own code merely calls them.
 
 - Project: https://ffmpeg.org
 - Bundled build (Windows): gyan.dev "release-essentials" (https://www.gyan.dev/ffmpeg/builds/)
-- Bundled build (Linux): John Van Sickle static build (https://johnvansickle.com/ffmpeg/)
+- Bundled build (Linux): BtbN static GPL build (https://github.com/BtbN/FFmpeg-Builds).
+  Releases up to 1.2.5 used the John Van Sickle static build
+  (https://johnvansickle.com/ffmpeg/).
 - License: **GNU General Public License, version 3 (GPLv3)**
 - Binaries shipped: `ffmpeg` and `ffprobe`, both from the build named above.
 - Role: ffmpeg merges video/audio streams, extracts audio and embeds

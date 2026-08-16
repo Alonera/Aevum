@@ -36,24 +36,38 @@ jobs:
           # is the newer of the two.
           curl -L -o bin/yt-dlp https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux
           chmod +x bin/yt-dlp
-          curl -L -o ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          # Static ffmpeg, pinned to a version line by the name of the file.
+          # This used to come from johnvansickle.com through a "latest
+          # release" pointer; on 2026-08-16 that host reset every connection,
+          # from the runner and from a desktop alike, and took the release
+          # build down with it. BtbN publishes the same kind of static GPL
+          # build as a GitHub release asset — the same infrastructure the
+          # rest of this workflow already depends on — and n7.1 in the name
+          # means the version cannot wander off on its own. 7.x is a version
+          # this app has been tested against; 8.1.x, which hangs forever on
+          # googlevideo range requests (yt-dlp #16546), can never arrive
+          # under this name.
+          FF=ffmpeg-n7.1-latest-linux64-gpl-7.1
+          curl -fL -o ffmpeg.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FF.tar.xz"
           mkdir -p fftmp && tar -xf ffmpeg.tar.xz -C fftmp
-          cp fftmp/ffmpeg-*-static/ffmpeg bin/ffmpeg
-          # ffprobe rides along in the same tarball. yt-dlp reads metadata
+          # Found rather than assumed: the two sources lay their archives out
+          # differently, and a hard-coded path is how a swap like this breaks
+          # quietly six months later.
+          cp "$(find fftmp -type f -name ffmpeg | head -1)" bin/ffmpeg
+          # ffprobe rides along in the same archive. yt-dlp reads metadata
           # through it, and without it --add-metadata gives up with
           # "ffprobe not found" on some sites. Same build as ffmpeg by
           # construction, which is the point of taking it from here.
-          cp fftmp/ffmpeg-*-static/ffprobe bin/ffprobe
+          cp "$(find fftmp -type f -name ffprobe | head -1)" bin/ffprobe
           chmod +x bin/ffmpeg bin/ffprobe
-          # The URL above is a moving "latest release" pointer, so what
-          # arrives has to be checked rather than trusted. The check is a
-          # list of what is known to work, not a list of what is known to
-          # break: refusing 8.1.x alone would have waved 9.x through on the
-          # day upstream cut it, and 8.1's fault — HTTP range requests that
-          # hang forever on googlevideo, killing clip downloads (yt-dlp
-          # #16546) — is exactly the kind of thing a new major can bring
-          # back. 7.x and 8.0.x are the versions this app has been tested
-          # against. A refusal here is a build to look at, not a bug.
+          # The name pins the version line, but check what actually arrived
+          # rather than trusting the label. A list of what is known to work,
+          # not of what is known to break: refusing 8.1.x alone would wave
+          # 9.x through on the day it is cut, and 8.1's fault — HTTP range
+          # requests that hang forever on googlevideo, killing clip
+          # downloads (yt-dlp #16546) — is exactly what a new major can
+          # bring back. A refusal here is a build to look at, not a bug.
           ver=$(bin/ffmpeg -version | head -1 | awk '{print $3}')
           echo "bundled ffmpeg: $ver"
           # The version is not a bare number: builds carry their origin in
@@ -68,6 +82,18 @@ jobs:
                echo "(8.1.x hangs on googlevideo range requests; newer majors are unverified)"
                exit 1 ;;
           esac
+          # A version number says nothing about what the build can encode,
+          # and the app needs specific encoders: exact clip cuts re-encode
+          # the section with x264 for mp4 and libvpx-vp9 with libopus for
+          # webm. A build missing one of those fails at the moment a user
+          # cuts a clip, in a place nothing here would have looked. Cheap to
+          # ask now, especially with the source of these binaries changing.
+          for enc in libx264 libvpx-vp9 libopus aac; do
+            bin/ffmpeg -hide_banner -encoders 2>/dev/null | grep -q " $enc " \
+              || { echo "REFUSING: bundled ffmpeg has no $enc encoder"; exit 1; }
+          done
+          echo "encoders present: libx264, libvpx-vp9, libopus, aac"
+          bin/ffprobe -version | head -1
 
       - name: Build AppImage + tar.gz
         run: |
