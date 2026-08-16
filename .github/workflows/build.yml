@@ -26,12 +26,14 @@ jobs:
       - name: Fetch Linux yt-dlp + static ffmpeg
         run: |
           mkdir -p bin
-          # The nightly channel, matching what the Windows build bundles and
-          # what the in-app updater fetches. Stable releases have come 25 to
-          # 84 days apart, and on 2026-08-16 the newest one was six weeks old
-          # and could not download from YouTube at all. Shipping the Linux
-          # half from a different channel would mean the two platforms fail
-          # on different days for different reasons.
+          # The nightly channel, matching what the Windows build bundles.
+          # Stable releases have come 25 to 84 days apart, and on 2026-08-16
+          # the newest one was six weeks old and could not download from
+          # YouTube at all. Shipping the Linux half from a different channel
+          # would mean the two platforms fail on different days for different
+          # reasons. What ships here is only the starting point: the in-app
+          # updater watches both channels and moves to stable whenever stable
+          # is the newer of the two.
           curl -L -o bin/yt-dlp https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux
           chmod +x bin/yt-dlp
           curl -L -o ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz

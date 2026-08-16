@@ -606,14 +606,14 @@ document.addEventListener('click',e=>{if(langbox&&!langbox.contains(e.target))cl
 function statusText(d){const tag=d.item?'['+d.item+'] ':'';const spd=d.speed?' · '+d.speed+' MB/s':'';const tot=d.total?' · '+d.total:'';const eta=d.eta?' · ETA '+d.eta:'';const det=tot+spd+eta;switch(d.code){case 'queued':return T('queued');case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%'+det;case 'clip':return (d.progress>0?T('downloading')+' '+d.progress+'%'+det:T('clipDownloading'));case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed')+(d.subswarn?' — '+T('subsSkipped'):'');case 'stopped':return T('stopped');case 'error':return d.cookieerr?T('cookiesLocked'):d.formaterr?T('formatMissing'):d.staleerr?T('siteChanged'):(d.error_line?d.error_line.slice(0,110):T('errorGeneric'));default:return '';}}
 // ── info / guide panel ──
 const INFO_TEXT={
- en:{title:'Guide',items:[['Video / Audio','download the full video, or just its sound (e.g. MP3).'],['Quality','best stream up to that height. Dimmed = not offered for this video; hover shows the size.'],['MP4','the most widely accepted container. H.264 where a site offers it, AV1 or VP9 above 1080p.'],['MKV','takes any codec, so it gets whatever the site offers at its best. Good for archiving.'],['H.264','an MP4 that really is H.264 — best for editors. Sites stop making it above 1080p.'],['WebM','VP9 — best quality per megabyte.'],['Subtitles',"embeds the uploader's own subtitles into the file (does not apply to auto captions)."],['Mute','video only, no audio track.'],['Thumbnail','saves the cover as jpg next to the video, in their own folder.'],['Cookies','use your browser login for members-only content (your own account).'],['Playlist','downloads the whole list into a numbered folder.'],['Clip','downloads only the chosen range — frame-exact, at full speed.'],['Lossless cut','no re-encode: original quality, but the clip may start a few seconds early.']]},
- tr:{title:'Rehber',items:[['Video / Ses','videonun tamamını ya da yalnız sesini (örn. MP3) indirir.'],['Kalite','o yüksekliğe kadarki en iyi akışı seçer. Soluk = bu videoda yok; üzerine gelince boyut görünür.'],['MP4','en yaygın kabul gören kapsayıcı. Site sunuyorsa H.264, 1080p üstünde AV1 ya da VP9.'],['MKV','her kodeği kabul eder, sitenin sunduğu en iyisini getirir. Arşiv için iyi.'],['H.264','gerçekten H.264 olan bir MP4 — kurgu için en iyisi. Siteler 1080p üstünde üretmiyor.'],['WebM','VP9 — megabayt başına en iyi kalite.'],['Altyazı','yükleyicinin kendi altyazısını dosyaya gömer (otomatik altyazılar için geçerli değildir).'],['Sessiz','yalnız görüntü, ses izi yok.'],['Kapak','kapak görselini jpg olarak videonun yanına, kendi klasörüne kaydeder.'],['Çerezler','üyelere özel içerik için tarayıcı oturumunu kullanır (kendi hesabın).'],['Liste','tüm oynatma listesini numaralı bir klasöre indirir.'],['Klip','yalnız seçtiğin aralığı indirir — kare hassasiyetinde ve tam hızda.'],['Kayıpsız kesim','yeniden kodlama yok: orijinal kalite, ama klip birkaç saniye erken başlayabilir.']]},
- es:{title:'Guía',items:[['Vídeo / Audio','descarga el vídeo completo o solo su sonido (p. ej. MP3).'],['Calidad','el mejor stream hasta esa altura. Atenuado = no disponible; al pasar el cursor se ve el tamaño.'],['MP4','el contenedor más aceptado. H.264 si el sitio lo ofrece, AV1 o VP9 por encima de 1080p.'],['MKV','acepta cualquier códec, así que trae lo mejor que ofrezca el sitio. Bueno para archivar.'],['H.264','un MP4 que de verdad es H.264 — ideal para editores. Los sitios no lo hacen por encima de 1080p.'],['WebM','VP9 — la mejor calidad por megabyte.'],['Subtítulos','incrusta los subtítulos propios del autor en el archivo (no aplica a los subtítulos automáticos).'],['Silenciar','solo imagen, sin pista de audio.'],['Miniatura','guarda la portada como jpg junto al vídeo, en su propia carpeta.'],['Cookies','usa tu sesión del navegador para contenido de miembros (tu propia cuenta).'],['Lista','descarga toda la lista en una carpeta numerada.'],['Clip','descarga solo el rango elegido — exacto al fotograma y a toda velocidad.'],['Corte sin pérdida','sin recodificar: calidad original, pero el clip puede empezar unos segundos antes.']]},
- de:{title:'Anleitung',items:[['Video / Audio','lädt das ganze Video oder nur den Ton (z. B. MP3).'],['Qualität','bester Stream bis zu dieser Höhe. Abgeblendet = nicht verfügbar; Hover zeigt die Größe.'],['MP4','der am breitesten unterstützte Container. H.264 wenn die Seite es anbietet, darüber AV1 oder VP9.'],['MKV','nimmt jeden Codec und holt das Beste, was die Seite anbietet. Gut zum Archivieren.'],['H.264','ein MP4, das wirklich H.264 ist — ideal für den Schnitt. Über 1080p gibt es das nicht mehr.'],['WebM','VP9 — beste Qualität pro Megabyte.'],['Untertitel','bettet die eigenen Untertitel des Uploaders in die Datei ein (gilt nicht für automatische Untertitel).'],['Stumm','nur Bild, keine Tonspur.'],['Vorschaubild','speichert das Cover als jpg neben dem Video, in eigenem Ordner.'],['Cookies','nutzt deinen Browser-Login für Mitgliederinhalte (eigenes Konto).'],['Playlist','lädt die ganze Liste in einen nummerierten Ordner.'],['Clip','lädt nur den gewählten Abschnitt — bildgenau, in voller Geschwindigkeit.'],['Verlustfreier Schnitt','keine Neukodierung: Originalqualität, der Clip kann aber ein paar Sekunden früher beginnen.']]},
- fr:{title:'Guide',items:[['Vidéo / Audio','télécharge la vidéo entière ou seulement le son (ex. MP3).'],['Qualité','meilleur flux jusqu\\'à cette hauteur. Grisé = indisponible ; le survol montre la taille.'],['MP4','le conteneur le plus largement accepté. H.264 quand le site en propose, AV1 ou VP9 au-dessus de 1080p.'],['MKV','accepte tous les codecs et prend le meilleur que le site propose. Bon pour archiver.'],['H.264','un MP4 qui est vraiment du H.264 — idéal pour le montage. Les sites cessent au-dessus de 1080p.'],['WebM','VP9 — la meilleure qualité par mégaoctet.'],['Sous-titres','incruste les sous-titres de l\\'auteur dans le fichier (ne s\\'applique pas aux sous-titres automatiques).'],['Muet','image seule, sans piste audio.'],['Miniature','enregistre la jaquette en jpg à côté de la vidéo, dans leur dossier.'],['Cookies','utilise ta session navigateur pour le contenu réservé (ton propre compte).'],['Playlist','télécharge toute la liste dans un dossier numéroté.'],['Clip','télécharge seulement la plage choisie — précis à l\\'image, à pleine vitesse.'],['Coupe sans perte','pas de réencodage : qualité d\\'origine, mais le clip peut commencer quelques secondes plus tôt.']]},
- it:{title:'Guida',items:[['Video / Audio','scarica il video intero o solo l\\'audio (es. MP3).'],['Qualità','il miglior stream fino a quell\\'altezza. Attenuato = non disponibile; al passaggio mostra la dimensione.'],['MP4','il contenitore più supportato. H.264 se il sito lo offre, AV1 o VP9 oltre i 1080p.'],['MKV','accetta qualsiasi codec e prende il meglio che il sito offre. Buono per archiviare.'],['H.264','un MP4 che è davvero H.264 — ideale per il montaggio. Oltre i 1080p i siti non lo fanno.'],['WebM','VP9 — la migliore qualità per megabyte.'],['Sottotitoli','incorpora i sottotitoli dell\\'autore nel file (non vale per i sottotitoli automatici).'],['Muto','solo immagine, nessuna traccia audio.'],['Miniatura','salva la copertina come jpg accanto al video, in una cartella dedicata.'],['Cookie','usa il login del browser per contenuti riservati (il tuo account).'],['Playlist','scarica l\\'intera lista in una cartella numerata.'],['Clip','scarica solo l\\'intervallo scelto — preciso al fotogramma, a piena velocità.'],['Taglio senza perdita','nessuna ricodifica: qualità originale, ma la clip può iniziare qualche secondo prima.']]},
- pt:{title:'Guia',items:[['Vídeo / Áudio','baixa o vídeo inteiro ou só o som (ex. MP3).'],['Qualidade','o melhor stream até essa altura. Esmaecido = indisponível; passar o mouse mostra o tamanho.'],['MP4','o contêiner mais aceito. H.264 quando o site oferece, AV1 ou VP9 acima de 1080p.'],['MKV','aceita qualquer códec e pega o melhor que o site oferece. Bom para arquivar.'],['H.264','um MP4 que é mesmo H.264 — ideal para editores. Os sites não fazem acima de 1080p.'],['WebM','VP9 — a melhor qualidade por megabyte.'],['Legendas','incorpora as legendas do próprio autor no arquivo (não se aplica às legendas automáticas).'],['Mudo','só imagem, sem faixa de áudio.'],['Miniatura','salva a capa como jpg ao lado do vídeo, em pasta própria.'],['Cookies','usa o login do navegador para conteúdo de membros (sua própria conta).'],['Playlist','baixa a lista inteira numa pasta numerada.'],['Clipe','baixa só o trecho escolhido — preciso ao quadro, em velocidade total.'],['Corte sem perdas','sem recodificação: qualidade original, mas o clipe pode começar alguns segundos antes.']]},
- ru:{title:'Справка',items:[['Видео / Аудио','скачивает всё видео или только звук (напр. MP3).'],['Качество','лучший поток до этой высоты. Тусклый = недоступно; при наведении виден размер.'],['MP4','самый широко поддерживаемый контейнер. H.264 если сайт его даёт, выше 1080p — AV1 или VP9.'],['MKV','принимает любой кодек и берёт лучшее, что есть на сайте. Хорош для архива.'],['H.264','MP4, который действительно H.264 — лучше всего для монтажа. Выше 1080p сайты его не делают.'],['WebM','VP9 — лучшее качество на мегабайт.'],['Субтитры','встраивает субтитры автора в файл (не относится к автоматическим субтитрам).'],['Без звука','только изображение, без звуковой дорожки.'],['Обложка','сохраняет обложку в jpg рядом с видео, в отдельной папке.'],['Cookies','использует вход в браузере для контента по подписке (ваш аккаунт).'],['Плейлист','скачивает весь список в нумерованную папку.'],['Клип','скачивает только выбранный отрезок — точно до кадра, на полной скорости.'],['Без перекодирования','оригинальное качество, но клип может начаться на несколько секунд раньше.']]}
+ en:{title:'Guide',items:[['Video / Audio','download the full video, or just its sound (e.g. MP3).'],['Quality','best stream up to that height. Dimmed = not offered for this video; hover shows the size.'],['MP4','the most widely accepted container. H.264 where a site offers it, AV1 or VP9 above 1080p.'],['MKV','takes any codec, so it gets whatever the site offers at its best. Good for archiving.'],['H.264','an MP4 that really is H.264 — best for editors. Sites stop making it above 1080p.'],['WebM','VP9 — best quality per megabyte.'],['Subtitles',"embeds the uploader's own subtitles into the file (does not apply to auto captions)."],['Mute','video only, no audio track.'],['Thumbnail','saves the cover as jpg next to the video, in their own folder.'],['Cookies','use your browser login for members-only content (your own account).'],['Playlist','downloads the whole list into a numbered folder.'],['Clip','downloads only the chosen range — frame-exact, at full speed.'],['Lossless cut','no re-encode: original quality, but the clip may start a few seconds early.'],['Version','checks whether a newer Aevum is out and installs it. Where a copy cannot install itself, the button opens the release page instead.'],['Packages','updates yt-dlp, the piece that goes stale when a site changes. Stable when stable is newer, nightly when only that one works; one click puts the bundled copy back.']]},
+ tr:{title:'Rehber',items:[['Video / Ses','videonun tamamını ya da yalnız sesini (örn. MP3) indirir.'],['Kalite','o yüksekliğe kadarki en iyi akışı seçer. Soluk = bu videoda yok; üzerine gelince boyut görünür.'],['MP4','en yaygın kabul gören kapsayıcı. Site sunuyorsa H.264, 1080p üstünde AV1 ya da VP9.'],['MKV','her kodeği kabul eder, sitenin sunduğu en iyisini getirir. Arşiv için iyi.'],['H.264','gerçekten H.264 olan bir MP4 — kurgu için en iyisi. Siteler 1080p üstünde üretmiyor.'],['WebM','VP9 — megabayt başına en iyi kalite.'],['Altyazı','yükleyicinin kendi altyazısını dosyaya gömer (otomatik altyazılar için geçerli değildir).'],['Sessiz','yalnız görüntü, ses izi yok.'],['Kapak','kapak görselini jpg olarak videonun yanına, kendi klasörüne kaydeder.'],['Çerezler','üyelere özel içerik için tarayıcı oturumunu kullanır (kendi hesabın).'],['Liste','tüm oynatma listesini numaralı bir klasöre indirir.'],['Klip','yalnız seçtiğin aralığı indirir — kare hassasiyetinde ve tam hızda.'],['Kayıpsız kesim','yeniden kodlama yok: orijinal kalite, ama klip birkaç saniye erken başlayabilir.'],["Sürüm","daha yeni bir Aevum çıkmış mı diye bakar ve kurar. Kendini kuramayan bir kopyada sürüm sayfasını açar."],["Paketler","site değişince bayatlayan parçayı, yt-dlp'yi günceller. Stable daha yeniyse onu, yalnızca nightly çalışıyorsa onu alır; tek tıkla pakettekine döner."]]},
+ es:{title:'Guía',items:[['Vídeo / Audio','descarga el vídeo completo o solo su sonido (p. ej. MP3).'],['Calidad','el mejor stream hasta esa altura. Atenuado = no disponible; al pasar el cursor se ve el tamaño.'],['MP4','el contenedor más aceptado. H.264 si el sitio lo ofrece, AV1 o VP9 por encima de 1080p.'],['MKV','acepta cualquier códec, así que trae lo mejor que ofrezca el sitio. Bueno para archivar.'],['H.264','un MP4 que de verdad es H.264 — ideal para editores. Los sitios no lo hacen por encima de 1080p.'],['WebM','VP9 — la mejor calidad por megabyte.'],['Subtítulos','incrusta los subtítulos propios del autor en el archivo (no aplica a los subtítulos automáticos).'],['Silenciar','solo imagen, sin pista de audio.'],['Miniatura','guarda la portada como jpg junto al vídeo, en su propia carpeta.'],['Cookies','usa tu sesión del navegador para contenido de miembros (tu propia cuenta).'],['Lista','descarga toda la lista en una carpeta numerada.'],['Clip','descarga solo el rango elegido — exacto al fotograma y a toda velocidad.'],['Corte sin pérdida','sin recodificar: calidad original, pero el clip puede empezar unos segundos antes.'],['Versión','comprueba si hay un Aevum más nuevo y lo instala. Si esta copia no puede instalarse sola, el botón abre la página de la versión.'],['Paquetes','actualiza yt-dlp, la pieza que se queda atrás cuando un sitio cambia. Estable cuando estable es más nuevo, nightly cuando solo ese funciona; un clic devuelve la copia incluida.']]},
+ de:{title:'Anleitung',items:[['Video / Audio','lädt das ganze Video oder nur den Ton (z. B. MP3).'],['Qualität','bester Stream bis zu dieser Höhe. Abgeblendet = nicht verfügbar; Hover zeigt die Größe.'],['MP4','der am breitesten unterstützte Container. H.264 wenn die Seite es anbietet, darüber AV1 oder VP9.'],['MKV','nimmt jeden Codec und holt das Beste, was die Seite anbietet. Gut zum Archivieren.'],['H.264','ein MP4, das wirklich H.264 ist — ideal für den Schnitt. Über 1080p gibt es das nicht mehr.'],['WebM','VP9 — beste Qualität pro Megabyte.'],['Untertitel','bettet die eigenen Untertitel des Uploaders in die Datei ein (gilt nicht für automatische Untertitel).'],['Stumm','nur Bild, keine Tonspur.'],['Vorschaubild','speichert das Cover als jpg neben dem Video, in eigenem Ordner.'],['Cookies','nutzt deinen Browser-Login für Mitgliederinhalte (eigenes Konto).'],['Playlist','lädt die ganze Liste in einen nummerierten Ordner.'],['Clip','lädt nur den gewählten Abschnitt — bildgenau, in voller Geschwindigkeit.'],['Verlustfreier Schnitt','keine Neukodierung: Originalqualität, der Clip kann aber ein paar Sekunden früher beginnen.'],['Version','sieht nach, ob ein neueres Aevum da ist, und installiert es. Kann eine Kopie sich nicht selbst installieren, öffnet die Schaltfläche die Release-Seite.'],['Pakete','aktualisiert yt-dlp, den Teil, der veraltet, sobald eine Seite sich ändert. Stable, wenn stable neuer ist, nightly, wenn nur das funktioniert; ein Klick stellt die mitgelieferte Kopie wieder her.']]},
+ fr:{title:'Guide',items:[['Vidéo / Audio','télécharge la vidéo entière ou seulement le son (ex. MP3).'],['Qualité','meilleur flux jusqu\\'à cette hauteur. Grisé = indisponible ; le survol montre la taille.'],['MP4','le conteneur le plus largement accepté. H.264 quand le site en propose, AV1 ou VP9 au-dessus de 1080p.'],['MKV','accepte tous les codecs et prend le meilleur que le site propose. Bon pour archiver.'],['H.264','un MP4 qui est vraiment du H.264 — idéal pour le montage. Les sites cessent au-dessus de 1080p.'],['WebM','VP9 — la meilleure qualité par mégaoctet.'],['Sous-titres','incruste les sous-titres de l\\'auteur dans le fichier (ne s\\'applique pas aux sous-titres automatiques).'],['Muet','image seule, sans piste audio.'],['Miniature','enregistre la jaquette en jpg à côté de la vidéo, dans leur dossier.'],['Cookies','utilise ta session navigateur pour le contenu réservé (ton propre compte).'],['Playlist','télécharge toute la liste dans un dossier numéroté.'],['Clip','télécharge seulement la plage choisie — précis à l\\'image, à pleine vitesse.'],['Coupe sans perte','pas de réencodage : qualité d\\'origine, mais le clip peut commencer quelques secondes plus tôt.'],["Version","regarde si un Aevum plus récent existe et l'installe. Si cette copie ne peut pas s'installer seule, le bouton ouvre la page de la version."],["Paquets","met à jour yt-dlp, la pièce qui vieillit dès qu'un site change. Stable quand stable est plus récent, nightly quand lui seul fonctionne ; un clic restaure la copie fournie."]]},
+ it:{title:'Guida',items:[['Video / Audio','scarica il video intero o solo l\\'audio (es. MP3).'],['Qualità','il miglior stream fino a quell\\'altezza. Attenuato = non disponibile; al passaggio mostra la dimensione.'],['MP4','il contenitore più supportato. H.264 se il sito lo offre, AV1 o VP9 oltre i 1080p.'],['MKV','accetta qualsiasi codec e prende il meglio che il sito offre. Buono per archiviare.'],['H.264','un MP4 che è davvero H.264 — ideale per il montaggio. Oltre i 1080p i siti non lo fanno.'],['WebM','VP9 — la migliore qualità per megabyte.'],['Sottotitoli','incorpora i sottotitoli dell\\'autore nel file (non vale per i sottotitoli automatici).'],['Muto','solo immagine, nessuna traccia audio.'],['Miniatura','salva la copertina come jpg accanto al video, in una cartella dedicata.'],['Cookie','usa il login del browser per contenuti riservati (il tuo account).'],['Playlist','scarica l\\'intera lista in una cartella numerata.'],['Clip','scarica solo l\\'intervallo scelto — preciso al fotogramma, a piena velocità.'],['Taglio senza perdita','nessuna ricodifica: qualità originale, ma la clip può iniziare qualche secondo prima.'],['Versione','controlla se è uscito un Aevum più recente e lo installa. Se questa copia non può installarsi da sola, il pulsante apre la pagina della versione.'],['Pacchetti','aggiorna yt-dlp, la parte che invecchia quando un sito cambia. Stable quando stable è più recente, nightly quando funziona solo quello; un clic ripristina la copia inclusa.']]},
+ pt:{title:'Guia',items:[['Vídeo / Áudio','baixa o vídeo inteiro ou só o som (ex. MP3).'],['Qualidade','o melhor stream até essa altura. Esmaecido = indisponível; passar o mouse mostra o tamanho.'],['MP4','o contêiner mais aceito. H.264 quando o site oferece, AV1 ou VP9 acima de 1080p.'],['MKV','aceita qualquer códec e pega o melhor que o site oferece. Bom para arquivar.'],['H.264','um MP4 que é mesmo H.264 — ideal para editores. Os sites não fazem acima de 1080p.'],['WebM','VP9 — a melhor qualidade por megabyte.'],['Legendas','incorpora as legendas do próprio autor no arquivo (não se aplica às legendas automáticas).'],['Mudo','só imagem, sem faixa de áudio.'],['Miniatura','salva a capa como jpg ao lado do vídeo, em pasta própria.'],['Cookies','usa o login do navegador para conteúdo de membros (sua própria conta).'],['Playlist','baixa a lista inteira numa pasta numerada.'],['Clipe','baixa só o trecho escolhido — preciso ao quadro, em velocidade total.'],['Corte sem perdas','sem recodificação: qualidade original, mas o clipe pode começar alguns segundos antes.'],['Versão','verifica se saiu um Aevum mais novo e o instala. Se esta cópia não puder se instalar sozinha, o botão abre a página da versão.'],['Pacotes','atualiza o yt-dlp, a peça que envelhece quando um site muda. Stable quando stable é mais novo, nightly quando só ele funciona; um clique volta à cópia incluída.']]},
+ ru:{title:'Справка',items:[['Видео / Аудио','скачивает всё видео или только звук (напр. MP3).'],['Качество','лучший поток до этой высоты. Тусклый = недоступно; при наведении виден размер.'],['MP4','самый широко поддерживаемый контейнер. H.264 если сайт его даёт, выше 1080p — AV1 или VP9.'],['MKV','принимает любой кодек и берёт лучшее, что есть на сайте. Хорош для архива.'],['H.264','MP4, который действительно H.264 — лучше всего для монтажа. Выше 1080p сайты его не делают.'],['WebM','VP9 — лучшее качество на мегабайт.'],['Субтитры','встраивает субтитры автора в файл (не относится к автоматическим субтитрам).'],['Без звука','только изображение, без звуковой дорожки.'],['Обложка','сохраняет обложку в jpg рядом с видео, в отдельной папке.'],['Cookies','использует вход в браузере для контента по подписке (ваш аккаунт).'],['Плейлист','скачивает весь список в нумерованную папку.'],['Клип','скачивает только выбранный отрезок — точно до кадра, на полной скорости.'],['Без перекодирования','оригинальное качество, но клип может начаться на несколько секунд раньше.'],['Версия','проверяет, вышла ли более новая Aevum, и устанавливает её. Если копия не может установиться сама, кнопка открывает страницу релиза.'],['Пакеты','обновляет yt-dlp — часть, которая устаревает, когда сайт меняется. Stable, если он новее, nightly, когда работает только он; один клик возвращает копию из пакета.']]}
 };
 const infoPanel=document.getElementById('infoPanel'),infobox=document.getElementById('infobox');
 function renderInfo(){const L=INFO_TEXT[curLang]||INFO_TEXT.en;document.getElementById('infoTitle').textContent=L.title;document.getElementById('infoList').innerHTML=L.items.map(([b,t])=>'<div class="info-item"><b>'+b+'</b> — '+t+'</div>').join('');}
@@ -695,9 +695,24 @@ function makeIcon(btn,onPress){
       const known=(pct!==null&&pct!==undefined&&!isNaN(pct));
       L.ring.classList.toggle('spin',!known);
       if(known)fg.style.strokeDashoffset=(RING*(1-Math.min(100,Math.max(0,pct))/100)).toFixed(1);
-    }else{L.ring.classList.remove('spin');fg.style.strokeDashoffset=RING;}
+    }else{L.ring.classList.remove('spin');fg.style.transition='';fg.style.strokeDashoffset=RING;}
     if(s==='scan')scanAt=Date.now();
     if(s==='done')timer=setTimeout(function(){set('idle');},2400);
+  }
+  // The close of a finished update: the ring empties and runs itself round
+  // once more, and only then does the tick appear. Ending on the last byte
+  // reads like something was cut off, and a chasing arc that simply stops
+  // reads like it gave up. Scans that found nothing skip this and tick
+  // straight away — there was no work to round off.
+  function finish(){
+    if(timer){clearTimeout(timer);timer=null;}
+    st='work';btn.className='iconbtn st-work';
+    for(const k in L)L[k].classList.toggle('on',k==='ring');
+    L.ring.classList.remove('spin');
+    fg.style.transition='none';fg.style.strokeDashoffset=RING;
+    void btn.offsetWidth;                     // let the empty ring be painted
+    fg.style.transition='stroke-dashoffset .5s ease';fg.style.strokeDashoffset=0;
+    timer=setTimeout(function(){set('done');},560);
   }
   // A cached answer arrives in twenty milliseconds and the whole scan becomes
   // a flicker that reads as nothing having happened. Hold it long enough to
@@ -708,11 +723,18 @@ function makeIcon(btn,onPress){
   }
   btn.addEventListener('click',function(e){e.stopPropagation();onPress(st);});
   set('idle');
-  return {set:set,settle:settle,at:function(){return st;}};
+  return {set:set,settle:settle,finish:finish,at:function(){return st;}};
 }
 const updLine=document.getElementById('updLine'),updBtn=document.getElementById('updBtn'),updHint=document.getElementById('updHint'),updNewTag=document.getElementById('updNewTag');
 let updInfo=null,updState=null,updTimer=null,updAsked=false,appVer='';
-const updIcon=makeIcon(updBtn,function(s){if(s==='found')applyUpdate();else if(s!=='work')checkUpdate();});
+// Some builds cannot install their own update — a copy running from source
+// has no package to fetch. Saying so in the hint and then doing nothing when
+// pressed is a dead end, so the button opens the release page instead.
+const updIcon=makeIcon(updBtn,function(s){
+  if(s==='found'){
+    if(updInfo&&updInfo.canApply)applyUpdate();
+    else if(updInfo&&updInfo.page)window.open(updInfo.page,'_blank','noopener');
+  }else if(s!=='work')checkUpdate();});
 function renderUpd(){
   // The version comes from /settings, which asks nothing of the network, so
   // the line is filled in before any scan and stays filled if none is run.
@@ -740,14 +762,12 @@ function checkUpdate(quiet){
   if(!quiet){updState=null;updIcon.set('scan');}
   renderUpd();
   fetch('/update/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updInfo=d;renderUpd();
-    // Newer, but nothing this build can install, is not a tick: the hint
-    // sends them to the releases page and the button goes back to looking.
-    if(!quiet)updIcon.settle(!d.ok?'idle':d.newer?(d.canApply?'found':'idle'):'done');
+    if(!quiet)updIcon.settle(!d.ok?'idle':d.newer?'found':'done');
   }).catch(function(){if(!quiet)updIcon.settle('idle');});}
 function pollUpd(){fetch('/update/status').then(r=>r.json()).then(d=>{updState=d;renderUpd();
   if(d.stage==='download'){updIcon.set('work',d.pct||0);return;}
   if(updTimer){clearInterval(updTimer);updTimer=null;}
-  updIcon.set(d.stage==='error'?'idle':'done');}).catch(()=>{});}
+  if(d.stage==='error')updIcon.set('idle');else updIcon.finish();}).catch(()=>{});}
 // A refused start comes back as a 409 with a body, which fetch is happy to
 // call an answer. Polling after one wipes the reason off the panel within a
 // second, because the server never entered "download" and its first status
@@ -785,8 +805,11 @@ function renderPkg(){
   }
   const cur=(pkgInfo&&pkgInfo.current)||pkgVer;
   if(!pkgInfo||!pkgInfo.ok){pkgHint.textContent=cur;return;}
-  pkgHint.textContent=pkgInfo.newer?TS('pkgNew').replace('{v}',pkgInfo.latest)
-                                   :TS('pkgLatest').replace('{v}',cur);
+  // Which channel it would move to, said out loud: "2026.09.01 stable" and
+  // "2026.09.05 nightly" are different offers and the difference matters.
+  pkgHint.textContent=pkgInfo.newer
+    ?TS('pkgNew').replace('{v}',pkgInfo.latest+(pkgInfo.channel?' '+pkgInfo.channel:''))
+    :TS('pkgLatest').replace('{v}',cur);
 }
 // quiet: refresh what is on the line without playing the scan again. Used
 // after an update, where the tick has just been earned and starting a new
@@ -801,14 +824,15 @@ function pollPkg(){fetch('/packages/status').then(r=>r.json()).then(d=>{pkgState
   if(d.stage==='working')return;
   if(pkgTimer){clearInterval(pkgTimer);pkgTimer=null;}
   if(d.stage==='error'){pkgIcon.set('idle');return;}
-  // 'idle' here is the server saying there was nothing to install, and a
-  // tick is the honest answer to that as much as to a finished update.
-  pkgIcon.set('done');checkPkg(true);}).catch(()=>{});}
+  pkgIcon.finish();checkPkg(true);}).catch(()=>{});}
 function applyPkg(){pkgState={stage:'working'};pkgIcon.set('work',null);renderPkg();
   fetch('/packages/apply',{method:'POST',headers:{'X-Aevum':'1'}})
     .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
     .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};pkgIcon.set('idle');renderPkg();return;}
       pkgState=x.body;renderPkg();
+      // Nothing newer on either channel: the server says so without starting
+      // anything, so there is no ring to round off. Straight to the tick.
+      if(x.body.stage!=='working'){pkgIcon.set('done');checkPkg(true);return;}
       if(!pkgTimer)pkgTimer=setInterval(pollPkg,900);}).catch(function(){pkgState={stage:'error',msg:''};pkgIcon.set('idle');renderPkg();});}
 // A refusal here arrives as a 409 with a body, which fetch treats as a
 // perfectly good answer. Reading only the body would swallow it: the user
@@ -2805,17 +2829,30 @@ def update_status():
 # replaces itself. All that is missing is somewhere writable to do it, which
 # is the copy this makes.
 #
-# The nightly channel, not stable, and that is a measured choice rather than a
-# taste for the bleeding edge. Stable releases have come 25 to 84 days apart,
-# and the fix for whatever the site changed this week is in the tree the day
-# after. On 2026-08-16 the newest stable was six weeks old and could not
-# download from YouTube at all; the nightly of that morning could.
-PKG_REPO = "yt-dlp/yt-dlp-nightly-builds"
-PKG_CHANNEL = "nightly"
+# Nightly is in the picture at all because stable releases have come 25 to 84
+# days apart, while the fix for whatever a site changed this week lands in the
+# tree the day after. On 2026-08-16 the newest stable was six weeks old and
+# could not download from YouTube at all; the nightly of that morning could.
+#
+# Both channels are watched, and stable is preferred whenever it is actually
+# ahead. yt-dlp tags a stable release every few weeks and builds a nightly
+# from the same tree every day, so the newest of the two is not always the
+# same kind of thing:
+#
+#   on stable, sites break, nightly has the fix   -> nightly, because it works
+#   later, stable catches up and passes it        -> stable, because it is the
+#                                                    build that has been sat on
+#   sites break again, nightly is ahead once more -> nightly again
+#
+# Which is to say: take whichever is genuinely newer, and let a tie go to
+# stable. Nobody is left on a nightly longer than they have to be, and nobody
+# is left on a stable that cannot download.
+PKG_REPOS = (("stable", "yt-dlp/yt-dlp"),
+             ("nightly", "yt-dlp/yt-dlp-nightly-builds"))
 
 _pkg_lock = threading.Lock()
 _pkg_state = {"stage": "idle", "msg": "", "version": ""}
-_pkg_cache = {"at": 0.0, "tag": ""}
+_pkg_cache = {"at": 0.0, "tags": {}}
 # Held for as long as the binary is being swapped. The route refuses to start
 # while a download runs, but a download can be queued a moment later and walk
 # into the swap — on Windows the old exe is renamed out from under it, and the
@@ -2853,15 +2890,33 @@ def _ytdlp_version(exe: str = "") -> str:
         return ""
 
 
-def _latest_pkg_tag() -> str:
-    """Newest nightly tag. Cached like the app's own check, for the same reason."""
+def _latest_pkg_tags() -> dict:
+    """Newest tag on each channel. Cached like the app's own check."""
     now = time.time()
-    if _pkg_cache["tag"] and now - _pkg_cache["at"] < 900:
-        return _pkg_cache["tag"]
-    with _fetch(f"https://api.github.com/repos/{PKG_REPO}/releases/latest") as r:
-        tag = (json.loads(r.read().decode("utf-8", "replace")).get("tag_name") or "")
-    _pkg_cache.update(at=now, tag=tag)
-    return tag
+    if _pkg_cache["tags"] and now - _pkg_cache["at"] < 900:
+        return _pkg_cache["tags"]
+    tags = {}
+    for channel, repo in PKG_REPOS:
+        with _fetch(f"https://api.github.com/repos/{repo}/releases/latest") as r:
+            tags[channel] = (json.loads(
+                r.read().decode("utf-8", "replace")).get("tag_name") or "")
+    _pkg_cache.update(at=now, tags=tags)
+    return tags
+
+
+def _pick_channel(current: str) -> tuple:
+    """Which channel to move to, if any: (channel, tag) or ("", "").
+
+    Stable is checked first, so a stable that has caught up wins even when a
+    nightly of the same day exists. What is running is the only baseline that
+    matters — being on a nightly does not mean staying on nightlies.
+    """
+    tags = _latest_pkg_tags()
+    cur = _version_tuple(current)
+    for channel, _ in PKG_REPOS:
+        if _version_tuple(tags.get(channel, "")) > cur:
+            return channel, tags[channel]
+    return "", ""
 
 
 def _set_pkg(**kw):
@@ -2869,7 +2924,7 @@ def _set_pkg(**kw):
         _pkg_state.update(kw)
 
 
-def _do_pkg_update():
+def _do_pkg_update(channel: str):
     """Copy yt-dlp somewhere writable, then let it update itself."""
     global YTDLP
     dest = _user_ytdlp()
@@ -2891,7 +2946,7 @@ def _do_pkg_update():
             os.replace(staging, dest)
             created = True
         out = subprocess.run(
-            [dest, "--update-to", PKG_CHANNEL], capture_output=True, text=True,
+            [dest, "--update-to", channel], capture_output=True, text=True,
             timeout=300, env=_clean_env(),
             creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0)
         YTDLP = dest
@@ -2916,7 +2971,7 @@ def _do_pkg_update():
             msg = (out.stderr or out.stdout or "").strip().splitlines()
             _set_pkg(stage="error", msg=(msg[-1][:120] if msg else "update failed"))
             return
-        _pkg_cache.update(at=0.0, tag="")
+        _pkg_cache.update(at=0.0, tags={})
         if ver == before:
             # Pressing the button on an already-current copy succeeds without
             # installing anything, and "updated to X" would be a plain
@@ -2963,11 +3018,11 @@ def packages_check():
     cur = _ytdlp_version()
     custom = os.path.isfile(_user_ytdlp())
     try:
-        tag = _latest_pkg_tag()
+        channel, tag = _pick_channel(cur)
     except Exception:
         return jsonify({"ok": False, "current": cur, "custom": custom})
     return jsonify({"ok": True, "current": cur, "latest": tag,
-                    "newer": _version_tuple(tag) > _version_tuple(cur),
+                    "channel": channel, "newer": bool(channel),
                     "custom": custom})
 
 
@@ -2983,6 +3038,19 @@ def packages_apply():
         if any(not j["done"] for j in jobs.values()):
             return jsonify({"stage": "error", "busy": True,
                             "msg": "a download is running"}), 409
+    # Decide the channel here rather than in the worker: a failure to reach
+    # GitHub should come back as a refusal to start, not as a thread that
+    # sets the busy flag and then discovers it has nothing to do.
+    try:
+        channel, _tag = _pick_channel(_ytdlp_version())
+    except Exception as e:
+        return jsonify({"stage": "error", "msg": str(e)[:120]}), 502
+    if not channel:
+        # Nothing newer on either channel. The page reads this the same way
+        # it reads a finished update: a tick, and no claim of having done
+        # anything.
+        _set_pkg(stage="idle", msg="", version=_ytdlp_version())
+        return jsonify(dict(_pkg_state))
     with _pkg_lock:
         if _pkg_state["stage"] == "working":
             return jsonify(dict(_pkg_state))
@@ -2994,7 +3062,7 @@ def packages_apply():
     # that is never coming, which is a hang rather than an error.
     _pkg_busy.set()
     try:
-        threading.Thread(target=_do_pkg_update, daemon=True).start()
+        threading.Thread(target=_do_pkg_update, args=(channel,), daemon=True).start()
     except RuntimeError as e:
         _pkg_busy.clear()
         _set_pkg(stage="error", msg=str(e)[:120])

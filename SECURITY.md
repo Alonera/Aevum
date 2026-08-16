@@ -49,11 +49,13 @@ From 1.2.6 the Packages line in Settings updates the copy of yt-dlp Aevum uses.
 It is the piece that goes out of date on its own, because the sites keep
 changing and it has to keep up. The same rules apply, with two differences:
 
-- **It is a second network request, to a second repository.** Opening Settings
-  asks `https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest`
-  for the newest build alongside the check for Aevum's own release. Same shape as
-  the other: a public read, nothing about you attached, cached for fifteen minutes,
-  and only when the panel is open.
+- **It asks two more repositories.** Opening Settings reads
+  `https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest` and
+  `https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest`
+  alongside the check for Aevum's own release, and offers whichever is genuinely
+  newer than the copy you are running — stable first when it is ahead. Same shape
+  as the other: a public read, nothing about you attached, cached for fifteen
+  minutes, and only when the panel is open.
 - **yt-dlp updates itself.** Pressing the button copies the bundled binary into
   your own folder — `%APPDATA%\Aevum\bin` on Windows, `~/.config/aevum/bin`
   elsewhere — and runs its own updater, which verifies the download against the
@@ -63,9 +65,11 @@ changing and it has to keep up. The same rules apply, with two differences:
 - **What the hash does and does not prove.** It proves the file arrived intact and
   is the one the yt-dlp project published. It does not mean anyone here has read
   that build. Before 1.2.6 the only yt-dlp Aevum would run was the one pinned into
-  the package at build time; now a newer one can arrive between releases, from the
-  nightly channel, and a bad day upstream reaches you without passing through us
-  first. That is the trade the feature makes, and it is deliberate: a yt-dlp frozen
+  the package at build time; now a newer one can arrive between releases, and a bad
+  day upstream reaches you without passing through us first. Nightly builds carry
+  more of that risk than stable ones, which is part of why stable is taken whenever
+  it is the newer of the two: the nightly channel is for the weeks when stable
+  cannot do the job, not for their own sake. That is the trade the feature makes, and it is deliberate: a yt-dlp frozen
   for two months stops working against the sites, which is the failure that
   actually happens. It never updates on its own — the button is yours to press —
   and "back to the bundled version" is one click away.
