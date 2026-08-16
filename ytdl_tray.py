@@ -310,6 +310,35 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer}
 .settings-label{font-size:12px;color:rgba(255,255,255,0.82)}
 .settings-hint{font-size:10px;color:rgba(255,255,255,0.4);line-height:1.55;margin-top:9px}
+/* The version a scan turned up, announced beside the name it belongs to */
+.upd-new{margin-right:auto;font-size:10px;letter-spacing:.03em;white-space:nowrap;color:rgba(var(--accent),0.95);opacity:0;transform:translateY(-3px);transition:opacity .3s ease,transform .3s cubic-bezier(.2,.9,.3,1.3)}
+.upd-new.on{opacity:1;transform:none}
+/* One round button that is four things in turn: look, found, fetching, done */
+.iconbtn{flex-shrink:0;width:27px;height:27px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.11);color:rgba(255,255,255,0.55);transition:border-color .18s,background .18s,color .18s,transform .18s}
+.iconbtn:hover{border-color:rgba(var(--accent),0.5);background:rgba(var(--accent),0.12);color:rgba(var(--accent),0.95)}
+.iconbtn:active{transform:scale(.92)}
+.iconbtn svg{width:15px;height:15px;display:block;overflow:visible}
+.iconbtn .lyr{opacity:0;transform:scale(.65);transform-origin:12px 12px;transition:opacity .22s ease,transform .26s cubic-bezier(.2,.9,.3,1.5)}
+.iconbtn .lyr.on{opacity:1;transform:scale(1)}
+.iconbtn .ring-bg{opacity:.16}
+.iconbtn .ring-fg{stroke-dasharray:56.5;stroke-dashoffset:56.5;transform:rotate(-90deg);transform-origin:12px 12px;transition:stroke-dashoffset .35s ease}
+.iconbtn.st-scan{color:rgba(var(--accent),0.95);border-color:rgba(var(--accent),0.4);background:rgba(var(--accent),0.1)}
+.iconbtn.st-scan .ic-ref{animation:ib-spin .85s linear infinite}
+.iconbtn.st-found{color:rgba(var(--accent),1);border-color:rgba(var(--accent),0.55);background:rgba(var(--accent),0.15)}
+.iconbtn.st-found .ic-dl{animation:ib-nudge 1.9s ease-in-out infinite}
+.iconbtn.st-work{color:rgba(var(--accent),0.95);border-color:rgba(var(--accent),0.45);background:rgba(var(--accent),0.1)}
+.iconbtn.st-work .ic-ring.spin{animation:ib-spin 1.1s linear infinite}
+.iconbtn.st-work .ic-ring.spin .ring-fg{stroke-dasharray:13 44;stroke-dashoffset:0;transition:none}
+.iconbtn.st-done{color:rgba(var(--accent),1);border-color:rgba(var(--accent),0.5);background:rgba(var(--accent),0.13)}
+.iconbtn.st-done .ok-path{stroke-dasharray:26;animation:ib-draw .42s ease forwards}
+@keyframes ib-spin{to{transform:rotate(360deg)}}
+@keyframes ib-nudge{0%,100%{transform:translateY(0)}55%{transform:translateY(2px)}}
+@keyframes ib-draw{from{stroke-dashoffset:26}to{stroke-dashoffset:0}}
+@media (prefers-reduced-motion: reduce){
+  .iconbtn .lyr,.upd-new{transition:none}
+  .iconbtn.st-scan .ic-ref,.iconbtn.st-found .ic-dl,.iconbtn.st-work .ic-ring.spin{animation:none}
+  .iconbtn.st-done .ok-path{animation:none;stroke-dashoffset:0}
+}
 .switch{position:relative;width:38px;height:20px;flex-shrink:0}
 .switch input{opacity:0;width:0;height:0;position:absolute}
 .switch .slider{position:absolute;inset:0;background:rgba(255,255,255,0.14);border-radius:20px;transition:background .25s}
@@ -515,12 +544,14 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
       <div class="settings-hint" id="settingsMenuHint" style="display:none"></div>
       <div class="settings-row" style="margin-top:14px">
         <span class="settings-label" id="updLine">Aevum</span>
-        <button class="chip" id="updBtn" style="display:none;padding:5px 12px;font-size:9px" onclick="applyUpdate()">Update</button>
+        <span class="upd-new" id="updNewTag"></span>
+        <button class="iconbtn" id="updBtn" aria-label="Update"></button>
       </div>
       <div class="settings-hint" id="updHint"></div>
       <div class="settings-row" style="margin-top:13px">
         <span class="settings-label" id="pkgLine">Packages</span>
-        <button class="chip" id="pkgBtn" style="display:none;padding:5px 12px;font-size:9px" onclick="applyPkg()">Update</button>
+        <span class="upd-new" id="pkgNewTag"></span>
+        <button class="iconbtn" id="pkgBtn" aria-label="Update"></button>
       </div>
       <div class="settings-hint" id="pkgHint"></div>
       <div class="settings-hint"><span id="pkgRevert" style="display:none;cursor:pointer;text-decoration:underline" onclick="revertPkg()"></span></div>
@@ -631,19 +662,66 @@ const settingsPanel=document.getElementById('settingsPanel'),settingsbox=documen
 const menuRow=document.getElementById('menuRow'),menuToggle=document.getElementById('menuToggle'),settingsMenuLabel=document.getElementById('settingsMenuLabel'),settingsMenuHint=document.getElementById('settingsMenuHint'),startupRow=document.getElementById('startupRow');
 function TS(k){const L=SETTINGS_TEXT[curLang]||SETTINGS_TEXT.en;return L[k]||SETTINGS_TEXT.en[k]||k;}
 function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');settingsMenuLabel.textContent=TS('menu');settingsMenuHint.textContent=TS('menuHint');renderUpd();renderPkg();}
-// ── Updating Aevum itself ──
+// ── Updating Aevum, and the packages under it ──
 // The check runs when the panel opens, not at launch: nobody wants a
-// download tool phoning home before it has been asked to do anything.
-const updLine=document.getElementById('updLine'),updBtn=document.getElementById('updBtn'),updHint=document.getElementById('updHint');
-let updInfo=null,updState=null,updTimer=null,updAsked=false;
+// download tool phoning home before it has been asked to do anything. The
+// button repeats it on demand.
+//
+// Both lines wear the same control, which is four things in turn: a pair of
+// circling arrows that looks, a down arrow that offers, a ring that fills,
+// and a tick. Which one it is showing decides what pressing it does, so the
+// state lives on the button instead of in a variable somebody has to keep in
+// step with it.
+const ICON_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
++'<g class="lyr ic-ref"><polyline points="20.5 5 20.5 10 15.5 10"/><polyline points="3.5 19 3.5 14 8.5 14"/>'
++'<path d="M5.2 9.2A7.6 7.6 0 0 1 18 6.3l2.5 2.4"/><path d="M18.8 14.8A7.6 7.6 0 0 1 6 17.7l-2.5-2.4"/></g>'
++'<g class="lyr ic-dl"><path d="M12 4.5v9.7"/><polyline points="7.8 10 12 14.2 16.2 10"/><line x1="5.5" y1="19.5" x2="18.5" y2="19.5"/></g>'
++'<g class="lyr ic-ok"><polyline class="ok-path" points="19.5 7 10 16.5 4.5 11"/></g>'
++'<g class="lyr ic-ring"><circle class="ring-bg" cx="12" cy="12" r="9"/><circle class="ring-fg" cx="12" cy="12" r="9"/></g></svg>';
+const RING=2*Math.PI*9;
+function makeIcon(btn,onPress){
+  btn.innerHTML=ICON_SVG;
+  const L={ref:btn.querySelector('.ic-ref'),dl:btn.querySelector('.ic-dl'),ok:btn.querySelector('.ic-ok'),ring:btn.querySelector('.ic-ring')};
+  const fg=btn.querySelector('.ring-fg');
+  let st='idle',timer=null,scanAt=0;
+  function set(s,pct){
+    if(timer){clearTimeout(timer);timer=null;}
+    st=s;btn.className='iconbtn st-'+s;
+    const key=s==='found'?'dl':s==='done'?'ok':s==='work'?'ring':'ref';
+    for(const k in L)L[k].classList.toggle('on',k===key);
+    if(s==='work'){
+      // A real percentage where there is one, a chasing arc where there is
+      // not: yt-dlp updates itself and never says how far along it is.
+      const known=(pct!==null&&pct!==undefined&&!isNaN(pct));
+      L.ring.classList.toggle('spin',!known);
+      if(known)fg.style.strokeDashoffset=(RING*(1-Math.min(100,Math.max(0,pct))/100)).toFixed(1);
+    }else{L.ring.classList.remove('spin');fg.style.strokeDashoffset=RING;}
+    if(s==='scan')scanAt=Date.now();
+    if(s==='done')timer=setTimeout(function(){set('idle');},2400);
+  }
+  // A cached answer arrives in twenty milliseconds and the whole scan becomes
+  // a flicker that reads as nothing having happened. Hold it long enough to
+  // be seen, then land on what it found.
+  function settle(next,pct){
+    if(timer)clearTimeout(timer);
+    timer=setTimeout(function(){set(next,pct);},Math.max(0,700-(Date.now()-scanAt)));
+  }
+  btn.addEventListener('click',function(e){e.stopPropagation();onPress(st);});
+  set('idle');
+  return {set:set,settle:settle,at:function(){return st;}};
+}
+const updLine=document.getElementById('updLine'),updBtn=document.getElementById('updBtn'),updHint=document.getElementById('updHint'),updNewTag=document.getElementById('updNewTag');
+let updInfo=null,updState=null,updTimer=null,updAsked=false,appVer='';
+const updIcon=makeIcon(updBtn,function(s){if(s==='found')applyUpdate();else if(s!=='work')checkUpdate();});
 function renderUpd(){
-  if(!updInfo){updLine.textContent='Aevum';updHint.textContent='';updBtn.style.display='none';return;}
-  updLine.textContent='Aevum '+updInfo.current;
-  updBtn.textContent=TS('updGet');
+  // The version comes from /settings, which asks nothing of the network, so
+  // the line is filled in before any scan and stays filled if none is run.
+  const cur=(updInfo&&updInfo.current)||appVer;
+  updLine.textContent='Aevum'+(cur?' '+cur:'');
+  updBtn.title=TS('updGet');
+  const tag=(updInfo&&updInfo.ok&&updInfo.newer)?updInfo.latest:'';
+  updNewTag.textContent=tag;updNewTag.classList.toggle('on',!!tag);
   if(updState&&updState.stage!=='idle'){
-    // An error is a dead end without this: the panel would sit on the
-    // message with no way back short of reloading the page.
-    updBtn.style.display=(updState.stage==='error'&&updInfo&&updInfo.newer&&updInfo.canApply)?'':'none';
     const s=updState.stage;
     updHint.textContent = s==='download' ? TS('updWorking').replace('{p}',updState.pct||0)
                         : s==='launched' ? TS('updStarted')
@@ -652,68 +730,93 @@ function renderUpd(){
                         : '';
     return;
   }
-  if(!updInfo.ok){updHint.textContent='';updBtn.style.display='none';return;}
-  if(updInfo.newer){
-    updHint.textContent=TS(updInfo.canApply?'updNew':'updManual').replace('{v}',updInfo.latest);
-    updBtn.style.display=updInfo.canApply?'':'none';
-  }else{updHint.textContent=TS('updLatest');updBtn.style.display='none';}
+  if(!updInfo||!updInfo.ok){updHint.textContent='';return;}
+  updHint.textContent=updInfo.newer?TS(updInfo.canApply?'updNew':'updManual').replace('{v}',updInfo.latest)
+                                   :TS('updLatest');
 }
 // The header is what makes this a request only this page can send: it turns
 // the call into a preflighted one, and nothing here answers a preflight.
-function checkUpdate(){fetch('/update/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updInfo=d;renderUpd();}).catch(()=>{});}
+function checkUpdate(quiet){
+  if(!quiet){updState=null;updIcon.set('scan');}
+  renderUpd();
+  fetch('/update/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updInfo=d;renderUpd();
+    // Newer, but nothing this build can install, is not a tick: the hint
+    // sends them to the releases page and the button goes back to looking.
+    if(!quiet)updIcon.settle(!d.ok?'idle':d.newer?(d.canApply?'found':'idle'):'done');
+  }).catch(function(){if(!quiet)updIcon.settle('idle');});}
 function pollUpd(){fetch('/update/status').then(r=>r.json()).then(d=>{updState=d;renderUpd();
-  if(d.stage!=='download'&&updTimer){clearInterval(updTimer);updTimer=null;}}).catch(()=>{});}
-function applyUpdate(){updBtn.style.display='none';updState={stage:'download',pct:0};renderUpd();
-  fetch('/update/apply',{method:'POST',headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updState=d;renderUpd();
-    if(!updTimer)updTimer=setInterval(pollUpd,800);}).catch(()=>{updState={stage:'error',msg:''};renderUpd();});}
+  if(d.stage==='download'){updIcon.set('work',d.pct||0);return;}
+  if(updTimer){clearInterval(updTimer);updTimer=null;}
+  updIcon.set(d.stage==='error'?'idle':'done');}).catch(()=>{});}
+// A refused start comes back as a 409 with a body, which fetch is happy to
+// call an answer. Polling after one wipes the reason off the panel within a
+// second, because the server never entered "download" and its first status
+// reply says so. Only a request that was accepted gets a poll timer.
+function applyUpdate(){updState={stage:'download',pct:0};updIcon.set('work',0);renderUpd();
+  fetch('/update/apply',{method:'POST',headers:{'X-Aevum':'1'}})
+    .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
+    .then(x=>{updState=x.body;renderUpd();
+      if(!x.ok){updIcon.set('idle');return;}
+      if(!updTimer)updTimer=setInterval(pollUpd,800);})
+    .catch(function(){updState={stage:'error',msg:''};updIcon.set('idle');renderUpd();});}
 // ── Updating yt-dlp, kept as its own line ──
 // Two different things wear two different buttons: this one is the piece
 // that goes stale between releases, and it moves on its own schedule.
-const pkgLine=document.getElementById('pkgLine'),pkgBtn=document.getElementById('pkgBtn'),pkgHint=document.getElementById('pkgHint'),pkgRevert=document.getElementById('pkgRevert');
-let pkgInfo=null,pkgState=null,pkgTimer=null;
+const pkgLine=document.getElementById('pkgLine'),pkgBtn=document.getElementById('pkgBtn'),pkgHint=document.getElementById('pkgHint'),pkgRevert=document.getElementById('pkgRevert'),pkgNewTag=document.getElementById('pkgNewTag');
+let pkgInfo=null,pkgState=null,pkgTimer=null,pkgVer='';
+const pkgIcon=makeIcon(pkgBtn,function(s){if(s==='found')applyPkg();else if(s!=='work')checkPkg();});
 function renderPkg(){
-  // The version lives in the hint, not next to the name: a yt-dlp version is
-  // a date, and "Paketler 2026.07.04" plus a button wraps this narrow panel.
+  // The name alone on this line, and the version in the hint under it: a
+  // yt-dlp version is a date, and "Paketler 2026.07.04" plus a found version
+  // plus a button is wider than this panel.
   pkgLine.textContent=TS('pkgName');
-  pkgBtn.textContent=TS('updGet');
+  pkgBtn.title=TS('updGet');
   pkgRevert.textContent=TS('pkgRevert');
   pkgRevert.style.display=(pkgInfo&&pkgInfo.custom&&(!pkgState||pkgState.stage!=='working'))?'':'none';
+  const tag=(pkgInfo&&pkgInfo.ok&&pkgInfo.newer)?pkgInfo.latest:'';
+  pkgNewTag.textContent=tag;pkgNewTag.classList.toggle('on',!!tag);
   if(pkgState&&pkgState.stage&&pkgState.stage!=='idle'){
     const s=pkgState.stage;
-    pkgBtn.style.display=(s==='error')?'':'none';
     pkgHint.textContent = s==='working' ? TS('pkgWorking')
                         : s==='done'    ? TS('pkgDone').replace('{v}',pkgState.version||'')
                         : s==='error'   ? (pkgState.busy?TS('updBusy'):TS('pkgFail')+(pkgState.msg?' ('+pkgState.msg+')':''))
                         : '';
     return;
   }
-  if(!pkgInfo||!pkgInfo.ok){pkgHint.textContent='';pkgBtn.style.display='none';return;}
-  if(pkgInfo.newer){pkgHint.textContent=TS('pkgNew').replace('{v}',pkgInfo.latest);pkgBtn.style.display='';}
-  else{pkgHint.textContent=TS('pkgLatest').replace('{v}',pkgInfo.current||'');pkgBtn.style.display='none';}
+  const cur=(pkgInfo&&pkgInfo.current)||pkgVer;
+  if(!pkgInfo||!pkgInfo.ok){pkgHint.textContent=cur;return;}
+  pkgHint.textContent=pkgInfo.newer?TS('pkgNew').replace('{v}',pkgInfo.latest)
+                                   :TS('pkgLatest').replace('{v}',cur);
 }
-function checkPkg(){fetch('/packages/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{pkgInfo=d;renderPkg();}).catch(()=>{});}
+// quiet: refresh what is on the line without playing the scan again. Used
+// after an update, where the tick has just been earned and starting a new
+// scan animation on top of it would wipe it.
+function checkPkg(quiet){
+  if(!quiet){pkgState=null;pkgIcon.set('scan');}
+  renderPkg();
+  fetch('/packages/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{pkgInfo=d;renderPkg();
+    if(!quiet)pkgIcon.settle(!d.ok?'idle':d.newer?'found':'done');
+  }).catch(function(){if(!quiet)pkgIcon.settle('idle');});}
 function pollPkg(){fetch('/packages/status').then(r=>r.json()).then(d=>{pkgState=d;renderPkg();
-  // Also on 'idle', which is how the server reports "nothing to install":
-  // without a fresh check the line would keep offering the update it just
-  // found was unnecessary.
-  if(d.stage!=='working'){if(pkgTimer){clearInterval(pkgTimer);pkgTimer=null;}if(d.stage!=='error')checkPkg();}}).catch(()=>{});}
-// A refused start is a 409 with a body, and polling after one wipes the
-// reason off the panel inside a second: the server never entered "working",
-// so the first status reply says "idle" and the message is gone. Only a
-// request that was actually accepted gets a poll timer.
-function applyPkg(){pkgBtn.style.display='none';pkgState={stage:'working'};renderPkg();
+  if(d.stage==='working')return;
+  if(pkgTimer){clearInterval(pkgTimer);pkgTimer=null;}
+  if(d.stage==='error'){pkgIcon.set('idle');return;}
+  // 'idle' here is the server saying there was nothing to install, and a
+  // tick is the honest answer to that as much as to a finished update.
+  pkgIcon.set('done');checkPkg(true);}).catch(()=>{});}
+function applyPkg(){pkgState={stage:'working'};pkgIcon.set('work',null);renderPkg();
   fetch('/packages/apply',{method:'POST',headers:{'X-Aevum':'1'}})
     .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
-    .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};renderPkg();return;}
+    .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};pkgIcon.set('idle');renderPkg();return;}
       pkgState=x.body;renderPkg();
-      if(!pkgTimer)pkgTimer=setInterval(pollPkg,900);}).catch(()=>{pkgState={stage:'error',msg:''};renderPkg();});}
+      if(!pkgTimer)pkgTimer=setInterval(pollPkg,900);}).catch(function(){pkgState={stage:'error',msg:''};pkgIcon.set('idle');renderPkg();});}
 // A refusal here arrives as a 409 with a body, which fetch treats as a
 // perfectly good answer. Reading only the body would swallow it: the user
 // presses the link during a download, nothing happens, nothing is said.
 function revertPkg(){fetch('/packages/revert',{method:'POST',headers:{'X-Aevum':'1'}})
   .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
-  .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};renderPkg();return;}
-    pkgState=null;checkPkg();}).catch(()=>{});}
+  .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};pkgIcon.set('idle');renderPkg();return;}
+    pkgState=null;pkgIcon.set('done');checkPkg(true);}).catch(()=>{});}
 function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');
   if(settingsPanel.classList.contains('open')){
     // "Updated to X" has been read by now. Without this it stays on the line
@@ -724,7 +827,8 @@ function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('o
 function closeSettings(){settingsPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(settingsbox&&!settingsbox.contains(e.target))closeSettings();});
 function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).catch(()=>{});}
-function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';if(s.lang&&I18N[s.lang]&&s.lang!==curLang)applyLang(s.lang);if(s.theme&&THEME_LIST.some(x=>x[0]===s.theme)&&s.theme!==curTheme)applyTheme(s.theme);}).catch(()=>{});}
+function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;
+  appVer=s.version||'';pkgVer=s.pkgVersion||'';renderUpd();renderPkg();const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';if(s.lang&&I18N[s.lang]&&s.lang!==curLang)applyLang(s.lang);if(s.theme&&THEME_LIST.some(x=>x[0]===s.theme)&&s.theme!==curTheme)applyTheme(s.theme);}).catch(()=>{});}
 function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startup:on})}).catch(()=>{});}
 function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
 // ── full-window interactive particle network ──
@@ -2949,6 +3053,12 @@ def settings_get():
         "canStartup": _IS_WINDOWS,
         "lang": cfg.get("lang", ""),
         "theme": cfg.get("theme", ""),
+        # What is installed, which is answerable without asking anyone. The
+        # panel fills both version lines from this the moment it opens, and
+        # they stay filled whether or not a scan is ever run — the network is
+        # only needed to say whether something newer exists.
+        "version": APP_VERSION,
+        "pkgVersion": _ytdlp_version(),
     })
 
 
