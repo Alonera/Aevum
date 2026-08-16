@@ -1536,6 +1536,23 @@ _RETRY_PAUSE = 2.0
 _REFUSED_RE = re.compile(r"HTTP Error 403", re.I)
 
 
+def _final_error(lines) -> str:
+    """The line an attempt actually died on, or "" if it named none.
+
+    Reading every line instead is how a download that failed for good ends
+    up being tried three times: yt-dlp retries fragments on its own and says
+    so in warnings, so "Read timed out" can sit ten lines above a final
+    "Video unavailable". Only the last ERROR describes the ending.
+
+    Takes the lines rather than fetching them, because one caller already
+    holds jobs_lock and it is not a reentrant lock.
+    """
+    for line in reversed(lines):
+        if "ERROR" in line:
+            return line
+    return ""
+
+
 def _clip_duration_seconds(data: dict):
     """Length of the requested clip in seconds, or None if not a bounded clip."""
     start = _parse_timestamp(data.get("clipStart", ""))
@@ -1713,7 +1730,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
         started_at = time.time()
         # Three tries, because YouTube's refusals are per-URL and a fresh
         # extraction usually gets a URL it will honour (see _RETRYABLE_RE).
-        mark = 0
+        emitted = 0          # lines this attempt has printed, trim or no trim
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             subs_embedded = False
             ff_last_bytes, ff_last_t = None, 0.0
@@ -1724,12 +1741,14 @@ def run_job(job_id: str, data: dict, output_dir: str):
             # for its whole second attempt. item is the playlist counter,
             # stale in the same way until a new one is printed.
             code, item = ("clip" if is_clip else "download"), ""
-            # Where this attempt's output starts. Reading the whole buffer
-            # would let the previous attempt's error decide this one: a 403
-            # followed by "Private video" would look retryable and spend a
-            # third attempt on a video that is never coming.
-            with jobs_lock:
-                mark = len(jobs[job_id]["lines"])
+            # How much of the buffer belongs to this attempt. Counting
+            # rather than remembering an index: the buffer is trimmed from
+            # the front on long jobs, and an index clamped at zero quietly
+            # widens to the whole history — which is what it exists to avoid.
+            # Reading the previous attempt's error would let a 403 followed
+            # by "Private video" spend a third attempt on a video that is
+            # never coming.
+            emitted = 0
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace", bufsize=1,
                                     env=_clean_env(),
@@ -1831,16 +1850,13 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 with jobs_lock:
                     lines = jobs[job_id]["lines"]
                     lines.append(line)
+                    emitted += 1
                     # A big playlist emits tens of thousands of lines; the page
                     # never shows them and the error scan only needs the tail.
                     if len(lines) > 500:
                         cut = len(lines) - 400
                         del lines[:cut]
                         jobs[job_id]["read_idx"] = max(0, jobs[job_id]["read_idx"] - cut)
-                        # This attempt's start moves with everything else,
-                        # or the retry decision below reads from the wrong
-                        # place — on a long playlist, from nowhere at all.
-                        mark = max(0, mark - cut)
                     jobs[job_id]["progress"] = progress
                     jobs[job_id]["code"] = code
                     jobs[job_id]["item"] = item
@@ -1850,9 +1866,17 @@ def run_job(job_id: str, data: dict, output_dir: str):
             success = proc.returncode == 0 and not cancelled
             if success or cancelled or attempt == _MAX_ATTEMPTS:
                 break
+            # A playlist runs with --ignore-errors and still exits non-zero
+            # if any one item failed, so a fifty-video list that lost one
+            # entry to a 403 looks exactly like a failure worth repeating.
+            # Repeating it re-extracts all fifty, downloads nothing new, and
+            # asks the site for more of what it just refused.
+            if data.get("playlist"):
+                break
             with jobs_lock:
-                tail = jobs[job_id]["lines"][mark:]
-            if not any(_RETRYABLE_RE.search(l) for l in tail):
+                lines = jobs[job_id]["lines"]
+                tail = lines[-emitted:] if emitted else []
+            if not _RETRYABLE_RE.search(_final_error(tail)):
                 break
             with jobs_lock:
                 jobs[job_id]["lines"].append(
@@ -1913,10 +1937,14 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 # the site has moved and the copy of yt-dlp in this build
                 # does not know the new way yet. Raw "HTTP Error 403" tells
                 # the user nothing they can act on, so say that instead.
-                # Read from this attempt only, and for a refusal only: the
-                # message names a number of tries and blames the site, and
-                # both halves have to be true when it appears.
-                if any(_REFUSED_RE.search(l) for l in jobs[job_id]["lines"][mark:]):
+                # Read from this attempt's ending only, and for a refusal
+                # only: the message names a number of tries and blames the
+                # site, and both halves have to be true when it appears. A
+                # playlist is excluded for the same reason it is not
+                # retried — one refused item out of fifty is not the site
+                # turning us away, and the other forty-nine arrived.
+                if not data.get("playlist") and _REFUSED_RE.search(_final_error(
+                        jobs[job_id]["lines"][-emitted:] if emitted else [])):
                     jobs[job_id]["staleerr"] = True
         with jobs_lock:
             title = jobs[job_id].get("title", "")
@@ -1975,8 +2003,19 @@ def _kill_current_probe():
 
 
 def _run_probe_json(args, timeout=25):
-    """Run yt-dlp and parse its single-line JSON output (None on failure)."""
+    """Run yt-dlp and parse its single-line JSON output (None on failure).
+
+    Not while the binary is being replaced: on Windows that launch fails with
+    an access error and the card says the link could not be read, which is
+    both wrong and unhelpful. A preview is advisory — skipping one for the
+    few seconds a swap takes costs nothing, and the next keystroke asks
+    again. Deliberately not applied to _ytdlp_version: the updater calls it
+    to check its own work, so refusing there would block the update on the
+    gate the update itself is holding.
+    """
     global _probe_proc
+    if _maintenance_busy.is_set():
+        return None
     _kill_current_probe()
     try:
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -2623,9 +2662,15 @@ def _set_update(**kw):
 
 def _do_update(rel: dict, kind: str, name: str, ver: str):
     """Download, verify, then hand over. Never overwrites a running binary."""
-    work = _update_dir(kind)
-    tmp = os.path.join(work, name + ".part")
+    work = tmp = ""
     try:
+        # Inside the try, both of them: the finally below is what releases
+        # the maintenance gate, and a line above it that raises would leave
+        # the gate shut with nobody to open it — every queued download stuck
+        # in "queued" and both updaters answering 409 until the app restarts.
+        # A hang with no error in it is the worst shape this can fail in.
+        work = _update_dir(kind)
+        tmp = os.path.join(work, name + ".part")
         # Ask the folder whether it will take a file before spending ninety
         # megabytes finding out. A copy installed somewhere read-only fails
         # here in a sentence the user can act on, rather than at the last
@@ -2931,19 +2976,33 @@ def _user_ytdlp() -> str:
                             "yt-dlp" + (".exe" if _IS_WINDOWS else "")))
 
 
+_pkg_ver_cache = {"exe": "", "ver": ""}
+
+
 def _ytdlp_version(exe: str = "") -> str:
     """Version of a yt-dlp, defaulting to the one in use.
 
     Naming one matters on the rollback paths: they need to know whether the
     binary they just wrote will run, and by then it may not be the one the
     app is pointing at.
+
+    Answering the default from memory, because the page asks on every load
+    and the answer costs a 17 MB PyInstaller launch — seconds on a cold
+    Windows start with a virus scanner reading the file, in front of the
+    settings panel each time. It only changes when an update or a revert
+    changes it, and both clear this.
     """
+    if not exe and _pkg_ver_cache["exe"] == YTDLP and _pkg_ver_cache["ver"]:
+        return _pkg_ver_cache["ver"]
     try:
         out = subprocess.run(
             [exe or YTDLP, "--version"], capture_output=True, text=True, timeout=20,
             env=_clean_env(),
             creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0)
-        return (out.stdout or "").strip().splitlines()[0].strip()
+        ver = (out.stdout or "").strip().splitlines()[0].strip()
+        if not exe and ver:
+            _pkg_ver_cache.update(exe=YTDLP, ver=ver)
+        return ver
     except (OSError, subprocess.SubprocessError, IndexError):
         return ""
 
@@ -2955,7 +3014,12 @@ def _latest_pkg_tags() -> dict:
         return _pkg_cache["tags"]
     tags = {}
     for channel, repo in PKG_REPOS:
-        with _fetch(f"https://api.github.com/repos/{repo}/releases/latest") as r:
+        # Ten seconds each, not the default thirty. This runs with the
+        # maintenance gate already shut, so every second spent waiting on
+        # GitHub is a second the download queue is parked — and if it ends in
+        # a timeout the queue was parked for work that never started.
+        with _fetch(f"https://api.github.com/repos/{repo}/releases/latest",
+                    timeout=10) as r:
             tags[channel] = (json.loads(
                 r.read().decode("utf-8", "replace")).get("tag_name") or "")
     _pkg_cache.update(at=now, tags=tags)
@@ -3008,6 +3072,10 @@ def _do_pkg_update(channel: str):
             timeout=300, env=_clean_env(),
             creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0)
         YTDLP = dest
+        # The path did not change, the file behind it did. Without this the
+        # remembered version is returned and the update decides it installed
+        # nothing.
+        _pkg_ver_cache["ver"] = ""
         ver = _ytdlp_version()
         if out.returncode != 0 or not ver:
             # Either the update refused or what it left behind will not run.
@@ -3162,19 +3230,24 @@ def packages_revert():
                             "msg": "a download is running"}), 409
     # Deleting the file an update is in the middle of writing leaves the app
     # pointed at a name with nothing behind it, and every download after that
-    # fails with "yt-dlp not found". The page hides the link while an update
-    # runs; a second tab does not have to.
-    with _pkg_lock:
-        if _pkg_state["stage"] == "working":
-            return jsonify({"stage": "error", "busy": True,
-                            "msg": "an update is running"}), 409
+    # fails with "yt-dlp not found". Reading the state was not enough: an
+    # update claims the gate a moment before it says "working", and in that
+    # gap this route saw an idle state and deleted the file out from under
+    # it. This takes the same gate the updaters take, so the three of them
+    # queue behind one another properly.
+    if not _claim_maintenance():
+        return jsonify({"stage": "error", "busy": True,
+                        "msg": "an update is running"}), 409
     try:
         if os.path.isfile(_user_ytdlp()):
             os.remove(_user_ytdlp())
     except OSError as e:
+        _maintenance_busy.clear()
         return jsonify({"stage": "error", "msg": str(e)[:120]}), 500
     YTDLP = BUNDLED_YTDLP
+    _pkg_ver_cache["ver"] = ""
     _set_pkg(stage="idle", msg="", version="")
+    _maintenance_busy.clear()
     return jsonify({"stage": "idle", "current": _ytdlp_version()})
 
 
