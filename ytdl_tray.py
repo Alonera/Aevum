@@ -66,7 +66,7 @@ PORT = 5000
 # carry it too — build.bat refuses to build when the three disagree, because
 # the updater compares this string against the newest release tag and a stale
 # constant would either hide a real update or offer one that is already here.
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 UPDATE_REPO = "Alonera/Aevum"
 
 # ── Page liveness tracking (on Linux the app lives with the browser tab) ─────
@@ -118,6 +118,15 @@ def _touch_last_seen():
     _page_seen = True
 
 
+def _user_data_dir() -> str:
+    """The per-user folder Aevum may write to: its settings, and yt-dlp."""
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "Aevum")
+    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(cfg, "aevum")
+
+
 def _bin_dir() -> str:
     """Folder with the bundled binaries (PyInstaller extraction dir, or next to this script)."""
     if getattr(sys, "frozen", False):
@@ -125,12 +134,37 @@ def _bin_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def _find_binary(name: str) -> str:
-    """Prefer the binary shipped with the app, fall back to PATH."""
+def _find_binary(name: str, user_first: bool = True) -> str:
+    """Prefer the binary shipped with the app, fall back to PATH.
+
+    yt-dlp is the exception, and it gets looked for in the user's own folder
+    first. It is the only bundled piece that argues with YouTube, so it is
+    the only one that goes stale: YouTube changes how it hands out media
+    URLs, yt-dlp follows within days, and a release of ours takes weeks. A
+    copy the user can actually write to means that fix does not have to wait
+    for one.
+
+    ffmpeg deliberately does not get the same treatment. It is pinned at 8.0
+    because 8.1.x hangs forever on googlevideo (yt-dlp #16546) and takes clip
+    downloads with it; a newer one appearing on its own would bring that back.
+    """
     sfx = ".exe" if sys.platform == "win32" else ""
     fname = name + sfx
-    for cand in (os.path.join(_bin_dir(), fname), os.path.join(_bin_dir(), "bin", fname)):
+    cands = []
+    if user_first and name == "yt-dlp":
+        cands.append(os.path.join(_user_data_dir(), "bin", fname))
+    cands += [os.path.join(_bin_dir(), fname), os.path.join(_bin_dir(), "bin", fname)]
+    for cand in cands:
         if os.path.isfile(cand):
+            # Through to the real location, not the link that points at it.
+            # yt-dlp is itself a PyInstaller binary, and its bootloader checks
+            # that the child it re-launches came from the same executable as
+            # its parent. A junction or symlink anywhere in the path makes
+            # those two names differ and it refuses to start, with a line
+            # about "parent process has different executable" that says
+            # nothing to anyone. Measured here: the same file runs fine by its
+            # real path and fails through a junction to it.
+            cand = os.path.realpath(cand)
             # PyInstaller drops the +x bit of bundled binaries on Linux/macOS — restore it
             if sys.platform != "win32":
                 try:
@@ -161,6 +195,9 @@ def _clean_env() -> dict:
 
 # Bundled yt-dlp + ffmpeg; works without installing anything
 YTDLP = _find_binary("yt-dlp")
+# The copy inside the package, kept so an updated yt-dlp that turns out to be
+# broken has something to fall back to.
+BUNDLED_YTDLP = _find_binary("yt-dlp", user_first=False)
 _FFMPEG = _find_binary("ffmpeg")
 FFPROBE = _find_binary("ffprobe")
 FFMPEG_DIR = os.path.dirname(_FFMPEG) if os.path.isfile(_FFMPEG) else ""
@@ -268,11 +305,40 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .langbox{position:relative;font-family:'JetBrains Mono',monospace}
 .settingsbox{position:relative;font-family:'JetBrains Mono',monospace}
 .settings-panel{position:absolute;right:0;bottom:calc(100% + 8px);width:250px;background:rgba(14,14,18,0.97);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:14px 15px;opacity:0;max-height:0;overflow:hidden;transform:translateY(8px) scale(0.97);transform-origin:bottom right;pointer-events:none;transition:opacity .2s ease,transform .22s cubic-bezier(.2,.9,.3,1.25),max-height .28s ease;box-shadow:0 16px 40px -12px rgba(0,0,0,0.85)}
-.settings-panel.open{opacity:1;max-height:340px;transform:translateY(0) scale(1);pointer-events:auto}
+.settings-panel.open{opacity:1;max-height:430px;transform:translateY(0) scale(1);pointer-events:auto}
 .settings-title{font-size:10px;letter-spacing:2px;color:rgba(255,255,255,0.85);margin-bottom:13px;text-transform:uppercase}
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer}
 .settings-label{font-size:12px;color:rgba(255,255,255,0.82)}
 .settings-hint{font-size:10px;color:rgba(255,255,255,0.4);line-height:1.55;margin-top:9px}
+/* The version a scan turned up, announced beside the name it belongs to */
+.upd-new{margin-right:auto;font-size:10px;letter-spacing:.03em;white-space:nowrap;color:rgba(var(--accent),0.95);opacity:0;transform:translateY(-3px);transition:opacity .3s ease,transform .3s cubic-bezier(.2,.9,.3,1.3)}
+.upd-new.on{opacity:1;transform:none}
+/* One round button that is four things in turn: look, found, fetching, done */
+.iconbtn{flex-shrink:0;width:27px;height:27px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.11);color:rgba(255,255,255,0.55);transition:border-color .18s,background .18s,color .18s,transform .18s}
+.iconbtn:hover{border-color:rgba(var(--accent),0.5);background:rgba(var(--accent),0.12);color:rgba(var(--accent),0.95)}
+.iconbtn:active{transform:scale(.92)}
+.iconbtn svg{width:15px;height:15px;display:block;overflow:visible}
+.iconbtn .lyr{opacity:0;transform:scale(.65);transform-origin:12px 12px;transition:opacity .22s ease,transform .26s cubic-bezier(.2,.9,.3,1.5)}
+.iconbtn .lyr.on{opacity:1;transform:scale(1)}
+.iconbtn .ring-bg{opacity:.16}
+.iconbtn .ring-fg{stroke-dasharray:56.5;stroke-dashoffset:56.5;transform:rotate(-90deg);transform-origin:12px 12px;transition:stroke-dashoffset .35s ease}
+.iconbtn.st-scan{color:rgba(var(--accent),0.95);border-color:rgba(var(--accent),0.4);background:rgba(var(--accent),0.1)}
+.iconbtn.st-scan .ic-ref{animation:ib-spin .85s linear infinite}
+.iconbtn.st-found{color:rgba(var(--accent),1);border-color:rgba(var(--accent),0.55);background:rgba(var(--accent),0.15)}
+.iconbtn.st-found .ic-dl{animation:ib-nudge 1.9s ease-in-out infinite}
+.iconbtn.st-work{color:rgba(var(--accent),0.95);border-color:rgba(var(--accent),0.45);background:rgba(var(--accent),0.1)}
+.iconbtn.st-work .ic-ring.spin{animation:ib-spin 1.1s linear infinite}
+.iconbtn.st-work .ic-ring.spin .ring-fg{stroke-dasharray:13 44;stroke-dashoffset:0;transition:none}
+.iconbtn.st-done{color:rgba(var(--accent),1);border-color:rgba(var(--accent),0.5);background:rgba(var(--accent),0.13)}
+.iconbtn.st-done .ok-path{stroke-dasharray:26;animation:ib-draw .42s ease forwards}
+@keyframes ib-spin{to{transform:rotate(360deg)}}
+@keyframes ib-nudge{0%,100%{transform:translateY(0)}55%{transform:translateY(2px)}}
+@keyframes ib-draw{from{stroke-dashoffset:26}to{stroke-dashoffset:0}}
+@media (prefers-reduced-motion: reduce){
+  .iconbtn .lyr,.upd-new{transition:none}
+  .iconbtn.st-scan .ic-ref,.iconbtn.st-found .ic-dl,.iconbtn.st-work .ic-ring.spin{animation:none}
+  .iconbtn.st-done .ok-path{animation:none;stroke-dashoffset:0}
+}
 .switch{position:relative;width:38px;height:20px;flex-shrink:0}
 .switch input{opacity:0;width:0;height:0;position:absolute}
 .switch .slider{position:absolute;inset:0;background:rgba(255,255,255,0.14);border-radius:20px;transition:background .25s}
@@ -478,9 +544,18 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
       <div class="settings-hint" id="settingsMenuHint" style="display:none"></div>
       <div class="settings-row" style="margin-top:14px">
         <span class="settings-label" id="updLine">Aevum</span>
-        <button class="chip" id="updBtn" style="display:none;padding:5px 12px;font-size:9px" onclick="applyUpdate()">Update</button>
+        <span class="upd-new" id="updNewTag"></span>
+        <button class="iconbtn" id="updBtn" aria-label="Update"></button>
       </div>
       <div class="settings-hint" id="updHint"></div>
+      <div class="settings-row" style="margin-top:13px">
+        <span class="settings-label" id="pkgLine">Packages</span>
+        <span class="upd-new" id="pkgNewTag"></span>
+        <button class="iconbtn" id="pkgBtn" aria-label="Update"></button>
+      </div>
+      <div class="settings-hint" id="pkgHint"></div>
+      <div class="settings-hint" id="pkgAdvice" style="opacity:.75"></div>
+      <div class="settings-hint"><span id="pkgRevert" style="display:none;cursor:pointer;text-decoration:underline" onclick="revertPkg()"></span></div>
     </div>
     <button class="lang-toggle" id="settingsToggle" onclick="toggleSettings(event)" aria-label="Settings">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.4-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.4-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.4V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.4 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.4 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.4 1z"/></svg>
@@ -509,14 +584,14 @@ let jobId=null,pollTimer=null;
 const state={mode:'video',vq:'1080p',cont:'mp4',fmt:'mp3',br:'192k',cookies:'none',subs:false,mute:false,thumb:false,playlist:false,clipLossless:false};
 // ── i18n strings ──
 const I18N={
- en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",downloads:"Downloads",queued:"queued",qRemove:"Remove from queue",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download.",appClosed:"⚠ Aevum has quit — relaunch the app to continue.",probeLoading:"loading info…",clipDownloading:"downloading clip…",probeNA:"not available",probeVideos:"videos",probeInPlaylist:"playlist link",clip:"Clip",clipHint:"optional — downloads only this section",subsSkipped:"subtitles were unavailable (skipped)",clipLossless:"Lossless cut",clipLosslessHint:"No re-encode: the cut snaps to the nearest keyframe, so the clip may start a few seconds early.",thumbnail:"Thumbnail",h264Cap:"⚠ H.264 only goes up to {h}p on this video — that is what will download.",cookiesLocked:"Chrome keeps its cookies to itself now — Firefox still works, Edge and Brave do not.",h264Unsure:"This site does not say which codec it serves. Aevum will look for H.264 and usually finds it, but cannot promise it.",h264None:"⚠ This video has no H.264. You will get whatever sits in an mp4, which editors may refuse.",formatMissing:"the format you asked for is not available for this video"},
- tr:{urlPlaceholder:"Video bağlantısını yapıştır — her site desteklenir",download:"İndir",mode:"Mod",video:"Video",audio:"Ses",quality:"Kalite",best:"En İyi",container:"Biçim",options:"Seçenek",subtitles:"Altyazı",mute:"Sessiz",format:"Format",bitrate:"Bit Hızı",source:"Kaynak",cookies:"Çerezler",none:"Yok",cookiesHint:"Giriş yapman gereken sitelerden (kendi hesabınla) indirmek için tarayıcının oturumunu kullanır. O tarayıcıyı önce kapat.",playlist:"Liste",downloadPlaylist:"Oynatma Listesini İndir",folder:"Klasör",history:"Geçmiş",downloads:"İndirmeler",queued:"sırada",qRemove:"Kuyruktan çıkar",stop:"Durdur",connecting:"bağlanıyor...",starting:"başlatılıyor...",downloading:"İndiriliyor",processing:"işleniyor...",completed:"tamamlandı ✓",stopping:"durduruluyor...",stopped:"durduruldu",errorGeneric:"hata oluştu — konsolu kontrol et",connError:"bağlantı hatası",mixWarn:"⚠ YouTube Mix (radyo) listesi sonsuzdur — ilk 50 video indirilecek.",mixInfo:"ℹ Bu bir Mix bağlantısı. Liste kapalı, yalnızca bu video inecek.",appClosed:"⚠ Aevum kapandı — devam etmek için uygulamayı yeniden başlat.",probeLoading:"bilgi yükleniyor…",clipDownloading:"klip indiriliyor…",probeNA:"mevcut değil",probeVideos:"video",probeInPlaylist:"liste bağlantısı",clip:"Klip",clipHint:"isteğe bağlı — sadece bu aralığı indirir",subsSkipped:"altyazı alınamadı (atlandı)",clipLossless:"Kayıpsız kesim",clipLosslessHint:"Yeniden kodlama yok: kesim en yakın keyframe'e oturur, klip birkaç saniye erken başlayabilir.",thumbnail:"Kapak",h264Cap:"⚠ Bu videoda H.264 en fazla {h}p — inecek olan bu.",cookiesLocked:"Chrome çerezlerini artık başka programlara açmıyor — Firefox çalışıyor, Edge ve Brave açmıyor.",h264Unsure:"Bu site hangi kodeği sunduğunu bildirmiyor. Aevum H.264 arayacak ve genelde buluyor, ama söz veremez.",h264None:"⚠ Bu videoda H.264 yok. mp4 içinde ne varsa onu alacaksın, kurgu programları açmayabilir.",formatMissing:"istediğin biçim bu videoda yok"},
- es:{urlPlaceholder:"Pega un enlace de vídeo — cualquier sitio funciona",download:"Descargar",mode:"Modo",video:"Vídeo",audio:"Audio",quality:"Calidad",best:"La mejor",container:"Formato",options:"Opciones",subtitles:"Subtítulos",mute:"Silenciar",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Ninguno",cookiesHint:"Usa la sesión de tu navegador para descargar de sitios donde debes iniciar sesión (tu propia cuenta). Cierra ese navegador primero.",playlist:"Lista",downloadPlaylist:"Descargar lista",folder:"Carpeta",history:"Historial",downloads:"Descargas",queued:"en cola",qRemove:"Quitar de la cola",stop:"Detener",connecting:"conectando...",starting:"iniciando...",downloading:"Descargando",processing:"procesando...",completed:"completado ✓",stopping:"deteniendo...",stopped:"detenido",errorGeneric:"ocurrió un error — revisa la consola",connError:"error de conexión",mixWarn:"⚠ La Mix (radio) de YouTube es infinita — solo se descargarán los primeros 50 vídeos.",mixInfo:"ℹ Es un enlace Mix. La lista está desactivada, solo se descargará este vídeo.",appClosed:"⚠ Aevum se ha cerrado — vuelve a abrir la aplicación para continuar.",probeLoading:"cargando info…",clipDownloading:"descargando clip…",probeNA:"no disponible",probeVideos:"vídeos",probeInPlaylist:"enlace de lista",clip:"Clip",clipHint:"opcional — descarga solo esta sección",subsSkipped:"subtítulos no disponibles (omitidos)",clipLossless:"Corte sin pérdida",clipLosslessHint:"Sin recodificación: el corte se ajusta al fotograma clave más cercano, el clip puede empezar unos segundos antes.",thumbnail:"Miniatura",h264Cap:"⚠ En este vídeo H.264 llega solo a {h}p — eso es lo que se descargará.",cookiesLocked:"Chrome ya no comparte sus cookies — Firefox sí funciona, Edge y Brave no.",h264Unsure:"Este sitio no dice qué códec ofrece. Aevum buscará H.264 y suele encontrarlo, pero no puede prometerlo.",h264None:"⚠ Este vídeo no tiene H.264. Recibirás lo que haya dentro de un mp4, y los editores pueden rechazarlo.",formatMissing:"el formato que pediste no está disponible para este vídeo"},
- de:{urlPlaceholder:"Video-Link einfügen — jede Seite funktioniert",download:"Herunterladen",mode:"Modus",video:"Video",audio:"Audio",quality:"Qualität",best:"Beste",container:"Format",options:"Optionen",subtitles:"Untertitel",mute:"Stumm",format:"Format",bitrate:"Bitrate",source:"Quelle",cookies:"Cookies",none:"Keine",cookiesHint:"Nutzt die Sitzung deines Browsers, um von Seiten herunterzuladen, bei denen du angemeldet sein musst (dein eigenes Konto). Schließe diesen Browser zuerst.",playlist:"Playlist",downloadPlaylist:"Playlist herunterladen",folder:"Ordner",history:"Verlauf",downloads:"Downloads",queued:"in Warteschlange",qRemove:"Aus der Warteschlange entfernen",stop:"Stopp",connecting:"verbinde...",starting:"starte...",downloading:"Wird geladen",processing:"verarbeite...",completed:"fertig ✓",stopping:"stoppe...",stopped:"gestoppt",errorGeneric:"ein Fehler ist aufgetreten — Konsole prüfen",connError:"Verbindungsfehler",mixWarn:"⚠ YouTube-Mix (Radio) ist endlos — nur die ersten 50 Videos werden geladen.",mixInfo:"ℹ Dies ist ein Mix-Link. Playlist ist aus, nur dieses Video wird geladen.",appClosed:"⚠ Aevum wurde beendet — starte die App neu, um fortzufahren.",probeLoading:"Infos werden geladen…",clipDownloading:"Clip wird geladen…",probeNA:"nicht verfügbar",probeVideos:"Videos",probeInPlaylist:"Playlist-Link",clip:"Clip",clipHint:"optional — lädt nur diesen Abschnitt",subsSkipped:"Untertitel nicht verfügbar (übersprungen)",clipLossless:"Verlustfreier Schnitt",clipLosslessHint:"Keine Neukodierung: der Schnitt rastet am nächsten Keyframe ein, der Clip kann ein paar Sekunden früher beginnen.",thumbnail:"Vorschaubild",h264Cap:"⚠ Bei diesem Video reicht H.264 nur bis {h}p — das wird geladen.",cookiesLocked:"Chrome gibt seine Cookies nicht mehr heraus — Firefox geht noch, Edge und Brave nicht.",h264Unsure:"Diese Seite nennt ihren Codec nicht. Aevum sucht nach H.264 und findet es meistens, kann es aber nicht zusagen.",h264None:"⚠ Dieses Video hat kein H.264. Du bekommst, was im mp4 steckt — Schnittprogramme lehnen das eventuell ab.",formatMissing:"das gewünschte Format gibt es für dieses Video nicht"},
- fr:{urlPlaceholder:"Colle un lien vidéo — tous les sites marchent",download:"Télécharger",mode:"Mode",video:"Vidéo",audio:"Audio",quality:"Qualité",best:"Meilleure",container:"Format",options:"Options",subtitles:"Sous-titres",mute:"Muet",format:"Format",bitrate:"Débit",source:"Source",cookies:"Cookies",none:"Aucun",cookiesHint:"Utilise la session de ton navigateur pour télécharger depuis les sites où tu dois être connecté (ton propre compte). Ferme d'abord ce navigateur.",playlist:"Playlist",downloadPlaylist:"Télécharger la playlist",folder:"Dossier",history:"Historique",downloads:"Téléchargements",queued:"en attente",qRemove:"Retirer de la file",stop:"Arrêter",connecting:"connexion...",starting:"démarrage...",downloading:"Téléchargement",processing:"traitement...",completed:"terminé ✓",stopping:"arrêt...",stopped:"arrêté",errorGeneric:"une erreur s'est produite — vérifie la console",connError:"erreur de connexion",mixWarn:"⚠ Le Mix (radio) YouTube est infini — seules les 50 premières vidéos seront téléchargées.",mixInfo:"ℹ C'est un lien Mix. La playlist est désactivée, seule cette vidéo sera téléchargée.",appClosed:"⚠ Aevum s'est fermé — relance l'application pour continuer.",probeLoading:"chargement…",clipDownloading:"téléchargement du clip…",probeNA:"non disponible",probeVideos:"vidéos",probeInPlaylist:"lien de playlist",clip:"Clip",clipHint:"optionnel — télécharge seulement cette section",subsSkipped:"sous-titres indisponibles (ignorés)",clipLossless:"Coupe sans perte",clipLosslessHint:"Pas de réencodage : la coupe s'aligne sur l'image clé la plus proche, le clip peut commencer quelques secondes plus tôt.",thumbnail:"Miniature",h264Cap:"⚠ Sur cette vidéo, H.264 ne dépasse pas {h}p — voilà ce qui sera téléchargé.",cookiesLocked:"Chrome ne partage plus ses cookies — Firefox fonctionne encore, Edge et Brave non.",h264Unsure:"Ce site ne dit pas quel codec il propose. Aevum cherchera du H.264 et le trouve en général, sans pouvoir le garantir.",h264None:"⚠ Cette vidéo na pas de H.264. Tu recevras ce que contient le mp4, que le montage peut refuser.",formatMissing:"le format demandé nexiste pas pour cette vidéo"},
- it:{urlPlaceholder:"Incolla un link video — funziona con qualsiasi sito",download:"Scarica",mode:"Modalità",video:"Video",audio:"Audio",quality:"Qualità",best:"Migliore",container:"Formato",options:"Opzioni",subtitles:"Sottotitoli",mute:"Muto",format:"Formato",bitrate:"Bitrate",source:"Originale",cookies:"Cookie",none:"Nessuno",cookiesHint:"Usa la sessione del tuo browser per scaricare dai siti dove devi aver effettuato l'accesso (il tuo account). Chiudi prima quel browser.",playlist:"Playlist",downloadPlaylist:"Scarica playlist",folder:"Cartella",history:"Cronologia",downloads:"Download",queued:"in coda",qRemove:"Rimuovi dalla coda",stop:"Ferma",connecting:"connessione...",starting:"avvio...",downloading:"Scaricamento",processing:"elaborazione...",completed:"completato ✓",stopping:"arresto...",stopped:"fermato",errorGeneric:"si è verificato un errore — controlla la console",connError:"errore di connessione",mixWarn:"⚠ Il Mix (radio) di YouTube è infinito — verranno scaricati solo i primi 50 video.",mixInfo:"ℹ Questo è un link Mix. La playlist è disattivata, verrà scaricato solo questo video.",appClosed:"⚠ Aevum si è chiuso — riavvia l'applicazione per continuare.",probeLoading:"caricamento…",clipDownloading:"download della clip…",probeNA:"non disponibile",probeVideos:"video",probeInPlaylist:"link di playlist",clip:"Clip",clipHint:"opzionale — scarica solo questa sezione",subsSkipped:"sottotitoli non disponibili (saltati)",clipLossless:"Taglio senza perdita",clipLosslessHint:"Nessuna ricodifica: il taglio si aggancia al keyframe più vicino, la clip può iniziare qualche secondo prima.",thumbnail:"Miniatura",h264Cap:"⚠ Su questo video H.264 arriva solo a {h}p — sarà questo a scaricarsi.",cookiesLocked:"Chrome non condivide più i suoi cookie — Firefox funziona ancora, Edge e Brave no.",h264Unsure:"Questo sito non dichiara il codec. Aevum cercherà H.264 e di solito lo trova, ma non può prometterlo.",h264None:"⚠ Questo video non ha H.264. Riceverai quello che sta in un mp4, che il montaggio può rifiutare.",formatMissing:"il formato richiesto non esiste per questo video"},
- pt:{urlPlaceholder:"Cole um link de vídeo — qualquer site funciona",download:"Baixar",mode:"Modo",video:"Vídeo",audio:"Áudio",quality:"Qualidade",best:"Melhor",container:"Formato",options:"Opções",subtitles:"Legendas",mute:"Mudo",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Nenhum",cookiesHint:"Usa a sessão do seu navegador para baixar de sites onde você precisa estar logado (sua própria conta). Feche esse navegador primeiro.",playlist:"Playlist",downloadPlaylist:"Baixar playlist",folder:"Pasta",history:"Histórico",downloads:"Downloads",queued:"na fila",qRemove:"Remover da fila",stop:"Parar",connecting:"conectando...",starting:"iniciando...",downloading:"Baixando",processing:"processando...",completed:"concluído ✓",stopping:"parando...",stopped:"parado",errorGeneric:"ocorreu um erro — verifique o console",connError:"erro de conexão",mixWarn:"⚠ O Mix (rádio) do YouTube é infinito — apenas os primeiros 50 vídeos serão baixados.",mixInfo:"ℹ Este é um link Mix. A playlist está desligada, apenas este vídeo será baixado.",appClosed:"⚠ O Aevum foi encerrado — reabra o aplicativo para continuar.",probeLoading:"carregando…",clipDownloading:"baixando clipe…",probeNA:"indisponível",probeVideos:"vídeos",probeInPlaylist:"link de playlist",clip:"Clipe",clipHint:"opcional — baixa só esta seção",subsSkipped:"legendas indisponíveis (ignoradas)",clipLossless:"Corte sem perdas",clipLosslessHint:"Sem recodificação: o corte encaixa no keyframe mais próximo, o clipe pode começar alguns segundos antes.",thumbnail:"Miniatura",h264Cap:"⚠ Neste vídeo o H.264 vai só até {h}p — é isso que será baixado.",cookiesLocked:"O Chrome não entrega mais seus cookies — o Firefox ainda funciona, Edge e Brave não.",h264Unsure:"Este site não informa o códec. O Aevum vai procurar H.264 e normalmente encontra, mas não pode prometer.",h264None:"⚠ Este vídeo não tem H.264. Você receberá o que estiver num mp4, e editores podem recusar.",formatMissing:"o formato que você pediu não existe para este vídeo"},
- ru:{urlPlaceholder:"Вставьте ссылку на видео — подходит любой сайт",download:"Скачать",mode:"Режим",video:"Видео",audio:"Аудио",quality:"Качество",best:"Лучшее",container:"Формат",options:"Опции",subtitles:"Субтитры",mute:"Без звука",format:"Формат",bitrate:"Битрейт",source:"Источник",cookies:"Cookies",none:"Нет",cookiesHint:"Использует сессию вашего браузера для загрузки с сайтов, где нужен вход (ваш аккаунт). Сначала закройте этот браузер.",playlist:"Плейлист",downloadPlaylist:"Скачать плейлист",folder:"Папка",history:"История",downloads:"Загрузки",queued:"в очереди",qRemove:"Убрать из очереди",stop:"Стоп",connecting:"подключение...",starting:"запуск...",downloading:"Загрузка",processing:"обработка...",completed:"готово ✓",stopping:"остановка...",stopped:"остановлено",errorGeneric:"произошла ошибка — проверьте консоль",connError:"ошибка соединения",mixWarn:"⚠ YouTube Mix (радио) бесконечен — будут загружены только первые 50 видео.",mixInfo:"ℹ Это ссылка Mix. Плейлист выключен, будет загружено только это видео.",appClosed:"⚠ Aevum завершил работу — перезапустите приложение, чтобы продолжить.",probeLoading:"загрузка…",clipDownloading:"загрузка клипа…",probeNA:"недоступно",probeVideos:"видео",probeInPlaylist:"ссылка плейлиста",clip:"Клип",clipHint:"необязательно — скачает только этот отрезок",subsSkipped:"субтитры недоступны (пропущены)",clipLossless:"Без перекодирования",clipLosslessHint:"Разрез по ближайшему ключевому кадру — клип может начаться на несколько секунд раньше.",thumbnail:"Обложка",h264Cap:"⚠ У этого видео H.264 доступен только до {h}p — это и скачается.",cookiesLocked:"Chrome больше не отдаёт свои cookies — Firefox ещё работает, Edge и Brave нет.",h264Unsure:"Этот сайт не сообщает кодек. Aevum поищет H.264 и обычно находит, но обещать не может.",h264None:"⚠ У этого видео нет H.264. Вы получите то, что лежит в mp4 — редакторы могут его не принять.",formatMissing:"запрошенный формат недоступен для этого видео"}
+ en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",downloads:"Downloads",queued:"queued",qRemove:"Remove from queue",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download.",appClosed:"⚠ Aevum has quit — relaunch the app to continue.",probeLoading:"loading info…",clipDownloading:"downloading clip…",probeNA:"not available",probeVideos:"videos",probeInPlaylist:"playlist link",clip:"Clip",clipHint:"optional — downloads only this section",subsSkipped:"subtitles were unavailable (skipped)",clipLossless:"Lossless cut",clipLosslessHint:"No re-encode: the cut snaps to the nearest keyframe, so the clip may start a few seconds early.",thumbnail:"Thumbnail",h264Cap:"⚠ H.264 only goes up to {h}p on this video — that is what will download.",cookiesLocked:"Chrome keeps its cookies to itself now — Firefox still works, Edge and Brave do not.",h264Unsure:"This site does not say which codec it serves. Aevum will look for H.264 and usually finds it, but cannot promise it.",h264None:"⚠ This video has no H.264. You will get whatever sits in an mp4, which editors may refuse.",formatMissing:"the format you asked for is not available for this video",siteChanged:"the site refused the download three times — try again, or update Packages in Settings"},
+ tr:{urlPlaceholder:"Video bağlantısını yapıştır — her site desteklenir",download:"İndir",mode:"Mod",video:"Video",audio:"Ses",quality:"Kalite",best:"En İyi",container:"Biçim",options:"Seçenek",subtitles:"Altyazı",mute:"Sessiz",format:"Format",bitrate:"Bit Hızı",source:"Kaynak",cookies:"Çerezler",none:"Yok",cookiesHint:"Giriş yapman gereken sitelerden (kendi hesabınla) indirmek için tarayıcının oturumunu kullanır. O tarayıcıyı önce kapat.",playlist:"Liste",downloadPlaylist:"Oynatma Listesini İndir",folder:"Klasör",history:"Geçmiş",downloads:"İndirmeler",queued:"sırada",qRemove:"Kuyruktan çıkar",stop:"Durdur",connecting:"bağlanıyor...",starting:"başlatılıyor...",downloading:"İndiriliyor",processing:"işleniyor...",completed:"tamamlandı ✓",stopping:"durduruluyor...",stopped:"durduruldu",errorGeneric:"hata oluştu — konsolu kontrol et",connError:"bağlantı hatası",mixWarn:"⚠ YouTube Mix (radyo) listesi sonsuzdur — ilk 50 video indirilecek.",mixInfo:"ℹ Bu bir Mix bağlantısı. Liste kapalı, yalnızca bu video inecek.",appClosed:"⚠ Aevum kapandı — devam etmek için uygulamayı yeniden başlat.",probeLoading:"bilgi yükleniyor…",clipDownloading:"klip indiriliyor…",probeNA:"mevcut değil",probeVideos:"video",probeInPlaylist:"liste bağlantısı",clip:"Klip",clipHint:"isteğe bağlı — sadece bu aralığı indirir",subsSkipped:"altyazı alınamadı (atlandı)",clipLossless:"Kayıpsız kesim",clipLosslessHint:"Yeniden kodlama yok: kesim en yakın keyframe'e oturur, klip birkaç saniye erken başlayabilir.",thumbnail:"Kapak",h264Cap:"⚠ Bu videoda H.264 en fazla {h}p — inecek olan bu.",cookiesLocked:"Chrome çerezlerini artık başka programlara açmıyor — Firefox çalışıyor, Edge ve Brave açmıyor.",h264Unsure:"Bu site hangi kodeği sunduğunu bildirmiyor. Aevum H.264 arayacak ve genelde buluyor, ama söz veremez.",h264None:"⚠ Bu videoda H.264 yok. mp4 içinde ne varsa onu alacaksın, kurgu programları açmayabilir.",formatMissing:"istediğin biçim bu videoda yok",siteChanged:"site indirmeyi üç kez reddetti — tekrar dene ya da Ayarlar'dan Paketler'i güncelle"},
+ es:{urlPlaceholder:"Pega un enlace de vídeo — cualquier sitio funciona",download:"Descargar",mode:"Modo",video:"Vídeo",audio:"Audio",quality:"Calidad",best:"La mejor",container:"Formato",options:"Opciones",subtitles:"Subtítulos",mute:"Silenciar",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Ninguno",cookiesHint:"Usa la sesión de tu navegador para descargar de sitios donde debes iniciar sesión (tu propia cuenta). Cierra ese navegador primero.",playlist:"Lista",downloadPlaylist:"Descargar lista",folder:"Carpeta",history:"Historial",downloads:"Descargas",queued:"en cola",qRemove:"Quitar de la cola",stop:"Detener",connecting:"conectando...",starting:"iniciando...",downloading:"Descargando",processing:"procesando...",completed:"completado ✓",stopping:"deteniendo...",stopped:"detenido",errorGeneric:"ocurrió un error — revisa la consola",connError:"error de conexión",mixWarn:"⚠ La Mix (radio) de YouTube es infinita — solo se descargarán los primeros 50 vídeos.",mixInfo:"ℹ Es un enlace Mix. La lista está desactivada, solo se descargará este vídeo.",appClosed:"⚠ Aevum se ha cerrado — vuelve a abrir la aplicación para continuar.",probeLoading:"cargando info…",clipDownloading:"descargando clip…",probeNA:"no disponible",probeVideos:"vídeos",probeInPlaylist:"enlace de lista",clip:"Clip",clipHint:"opcional — descarga solo esta sección",subsSkipped:"subtítulos no disponibles (omitidos)",clipLossless:"Corte sin pérdida",clipLosslessHint:"Sin recodificación: el corte se ajusta al fotograma clave más cercano, el clip puede empezar unos segundos antes.",thumbnail:"Miniatura",h264Cap:"⚠ En este vídeo H.264 llega solo a {h}p — eso es lo que se descargará.",cookiesLocked:"Chrome ya no comparte sus cookies — Firefox sí funciona, Edge y Brave no.",h264Unsure:"Este sitio no dice qué códec ofrece. Aevum buscará H.264 y suele encontrarlo, pero no puede prometerlo.",h264None:"⚠ Este vídeo no tiene H.264. Recibirás lo que haya dentro de un mp4, y los editores pueden rechazarlo.",formatMissing:"el formato que pediste no está disponible para este vídeo",siteChanged:"el sitio rechazó la descarga tres veces — inténtalo otra vez o actualiza Paquetes en Ajustes"},
+ de:{urlPlaceholder:"Video-Link einfügen — jede Seite funktioniert",download:"Herunterladen",mode:"Modus",video:"Video",audio:"Audio",quality:"Qualität",best:"Beste",container:"Format",options:"Optionen",subtitles:"Untertitel",mute:"Stumm",format:"Format",bitrate:"Bitrate",source:"Quelle",cookies:"Cookies",none:"Keine",cookiesHint:"Nutzt die Sitzung deines Browsers, um von Seiten herunterzuladen, bei denen du angemeldet sein musst (dein eigenes Konto). Schließe diesen Browser zuerst.",playlist:"Playlist",downloadPlaylist:"Playlist herunterladen",folder:"Ordner",history:"Verlauf",downloads:"Downloads",queued:"in Warteschlange",qRemove:"Aus der Warteschlange entfernen",stop:"Stopp",connecting:"verbinde...",starting:"starte...",downloading:"Wird geladen",processing:"verarbeite...",completed:"fertig ✓",stopping:"stoppe...",stopped:"gestoppt",errorGeneric:"ein Fehler ist aufgetreten — Konsole prüfen",connError:"Verbindungsfehler",mixWarn:"⚠ YouTube-Mix (Radio) ist endlos — nur die ersten 50 Videos werden geladen.",mixInfo:"ℹ Dies ist ein Mix-Link. Playlist ist aus, nur dieses Video wird geladen.",appClosed:"⚠ Aevum wurde beendet — starte die App neu, um fortzufahren.",probeLoading:"Infos werden geladen…",clipDownloading:"Clip wird geladen…",probeNA:"nicht verfügbar",probeVideos:"Videos",probeInPlaylist:"Playlist-Link",clip:"Clip",clipHint:"optional — lädt nur diesen Abschnitt",subsSkipped:"Untertitel nicht verfügbar (übersprungen)",clipLossless:"Verlustfreier Schnitt",clipLosslessHint:"Keine Neukodierung: der Schnitt rastet am nächsten Keyframe ein, der Clip kann ein paar Sekunden früher beginnen.",thumbnail:"Vorschaubild",h264Cap:"⚠ Bei diesem Video reicht H.264 nur bis {h}p — das wird geladen.",cookiesLocked:"Chrome gibt seine Cookies nicht mehr heraus — Firefox geht noch, Edge und Brave nicht.",h264Unsure:"Diese Seite nennt ihren Codec nicht. Aevum sucht nach H.264 und findet es meistens, kann es aber nicht zusagen.",h264None:"⚠ Dieses Video hat kein H.264. Du bekommst, was im mp4 steckt — Schnittprogramme lehnen das eventuell ab.",formatMissing:"das gewünschte Format gibt es für dieses Video nicht",siteChanged:"die Seite hat den Download dreimal abgelehnt — versuch es erneut oder aktualisiere Pakete in den Einstellungen"},
+ fr:{urlPlaceholder:"Colle un lien vidéo — tous les sites marchent",download:"Télécharger",mode:"Mode",video:"Vidéo",audio:"Audio",quality:"Qualité",best:"Meilleure",container:"Format",options:"Options",subtitles:"Sous-titres",mute:"Muet",format:"Format",bitrate:"Débit",source:"Source",cookies:"Cookies",none:"Aucun",cookiesHint:"Utilise la session de ton navigateur pour télécharger depuis les sites où tu dois être connecté (ton propre compte). Ferme d'abord ce navigateur.",playlist:"Playlist",downloadPlaylist:"Télécharger la playlist",folder:"Dossier",history:"Historique",downloads:"Téléchargements",queued:"en attente",qRemove:"Retirer de la file",stop:"Arrêter",connecting:"connexion...",starting:"démarrage...",downloading:"Téléchargement",processing:"traitement...",completed:"terminé ✓",stopping:"arrêt...",stopped:"arrêté",errorGeneric:"une erreur s'est produite — vérifie la console",connError:"erreur de connexion",mixWarn:"⚠ Le Mix (radio) YouTube est infini — seules les 50 premières vidéos seront téléchargées.",mixInfo:"ℹ C'est un lien Mix. La playlist est désactivée, seule cette vidéo sera téléchargée.",appClosed:"⚠ Aevum s'est fermé — relance l'application pour continuer.",probeLoading:"chargement…",clipDownloading:"téléchargement du clip…",probeNA:"non disponible",probeVideos:"vidéos",probeInPlaylist:"lien de playlist",clip:"Clip",clipHint:"optionnel — télécharge seulement cette section",subsSkipped:"sous-titres indisponibles (ignorés)",clipLossless:"Coupe sans perte",clipLosslessHint:"Pas de réencodage : la coupe s'aligne sur l'image clé la plus proche, le clip peut commencer quelques secondes plus tôt.",thumbnail:"Miniature",h264Cap:"⚠ Sur cette vidéo, H.264 ne dépasse pas {h}p — voilà ce qui sera téléchargé.",cookiesLocked:"Chrome ne partage plus ses cookies — Firefox fonctionne encore, Edge et Brave non.",h264Unsure:"Ce site ne dit pas quel codec il propose. Aevum cherchera du H.264 et le trouve en général, sans pouvoir le garantir.",h264None:"⚠ Cette vidéo na pas de H.264. Tu recevras ce que contient le mp4, que le montage peut refuser.",formatMissing:"le format demandé nexiste pas pour cette vidéo",siteChanged:"le site a refusé le téléchargement trois fois — réessaie ou mets à jour les Paquets dans les Paramètres"},
+ it:{urlPlaceholder:"Incolla un link video — funziona con qualsiasi sito",download:"Scarica",mode:"Modalità",video:"Video",audio:"Audio",quality:"Qualità",best:"Migliore",container:"Formato",options:"Opzioni",subtitles:"Sottotitoli",mute:"Muto",format:"Formato",bitrate:"Bitrate",source:"Originale",cookies:"Cookie",none:"Nessuno",cookiesHint:"Usa la sessione del tuo browser per scaricare dai siti dove devi aver effettuato l'accesso (il tuo account). Chiudi prima quel browser.",playlist:"Playlist",downloadPlaylist:"Scarica playlist",folder:"Cartella",history:"Cronologia",downloads:"Download",queued:"in coda",qRemove:"Rimuovi dalla coda",stop:"Ferma",connecting:"connessione...",starting:"avvio...",downloading:"Scaricamento",processing:"elaborazione...",completed:"completato ✓",stopping:"arresto...",stopped:"fermato",errorGeneric:"si è verificato un errore — controlla la console",connError:"errore di connessione",mixWarn:"⚠ Il Mix (radio) di YouTube è infinito — verranno scaricati solo i primi 50 video.",mixInfo:"ℹ Questo è un link Mix. La playlist è disattivata, verrà scaricato solo questo video.",appClosed:"⚠ Aevum si è chiuso — riavvia l'applicazione per continuare.",probeLoading:"caricamento…",clipDownloading:"download della clip…",probeNA:"non disponibile",probeVideos:"video",probeInPlaylist:"link di playlist",clip:"Clip",clipHint:"opzionale — scarica solo questa sezione",subsSkipped:"sottotitoli non disponibili (saltati)",clipLossless:"Taglio senza perdita",clipLosslessHint:"Nessuna ricodifica: il taglio si aggancia al keyframe più vicino, la clip può iniziare qualche secondo prima.",thumbnail:"Miniatura",h264Cap:"⚠ Su questo video H.264 arriva solo a {h}p — sarà questo a scaricarsi.",cookiesLocked:"Chrome non condivide più i suoi cookie — Firefox funziona ancora, Edge e Brave no.",h264Unsure:"Questo sito non dichiara il codec. Aevum cercherà H.264 e di solito lo trova, ma non può prometterlo.",h264None:"⚠ Questo video non ha H.264. Riceverai quello che sta in un mp4, che il montaggio può rifiutare.",formatMissing:"il formato richiesto non esiste per questo video",siteChanged:"il sito ha rifiutato il download tre volte — riprova o aggiorna i Pacchetti nelle Impostazioni"},
+ pt:{urlPlaceholder:"Cole um link de vídeo — qualquer site funciona",download:"Baixar",mode:"Modo",video:"Vídeo",audio:"Áudio",quality:"Qualidade",best:"Melhor",container:"Formato",options:"Opções",subtitles:"Legendas",mute:"Mudo",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Nenhum",cookiesHint:"Usa a sessão do seu navegador para baixar de sites onde você precisa estar logado (sua própria conta). Feche esse navegador primeiro.",playlist:"Playlist",downloadPlaylist:"Baixar playlist",folder:"Pasta",history:"Histórico",downloads:"Downloads",queued:"na fila",qRemove:"Remover da fila",stop:"Parar",connecting:"conectando...",starting:"iniciando...",downloading:"Baixando",processing:"processando...",completed:"concluído ✓",stopping:"parando...",stopped:"parado",errorGeneric:"ocorreu um erro — verifique o console",connError:"erro de conexão",mixWarn:"⚠ O Mix (rádio) do YouTube é infinito — apenas os primeiros 50 vídeos serão baixados.",mixInfo:"ℹ Este é um link Mix. A playlist está desligada, apenas este vídeo será baixado.",appClosed:"⚠ O Aevum foi encerrado — reabra o aplicativo para continuar.",probeLoading:"carregando…",clipDownloading:"baixando clipe…",probeNA:"indisponível",probeVideos:"vídeos",probeInPlaylist:"link de playlist",clip:"Clipe",clipHint:"opcional — baixa só esta seção",subsSkipped:"legendas indisponíveis (ignoradas)",clipLossless:"Corte sem perdas",clipLosslessHint:"Sem recodificação: o corte encaixa no keyframe mais próximo, o clipe pode começar alguns segundos antes.",thumbnail:"Miniatura",h264Cap:"⚠ Neste vídeo o H.264 vai só até {h}p — é isso que será baixado.",cookiesLocked:"O Chrome não entrega mais seus cookies — o Firefox ainda funciona, Edge e Brave não.",h264Unsure:"Este site não informa o códec. O Aevum vai procurar H.264 e normalmente encontra, mas não pode prometer.",h264None:"⚠ Este vídeo não tem H.264. Você receberá o que estiver num mp4, e editores podem recusar.",formatMissing:"o formato que você pediu não existe para este vídeo",siteChanged:"o site recusou o download três vezes — tente de novo ou atualize os Pacotes nas Configurações"},
+ ru:{urlPlaceholder:"Вставьте ссылку на видео — подходит любой сайт",download:"Скачать",mode:"Режим",video:"Видео",audio:"Аудио",quality:"Качество",best:"Лучшее",container:"Формат",options:"Опции",subtitles:"Субтитры",mute:"Без звука",format:"Формат",bitrate:"Битрейт",source:"Источник",cookies:"Cookies",none:"Нет",cookiesHint:"Использует сессию вашего браузера для загрузки с сайтов, где нужен вход (ваш аккаунт). Сначала закройте этот браузер.",playlist:"Плейлист",downloadPlaylist:"Скачать плейлист",folder:"Папка",history:"История",downloads:"Загрузки",queued:"в очереди",qRemove:"Убрать из очереди",stop:"Стоп",connecting:"подключение...",starting:"запуск...",downloading:"Загрузка",processing:"обработка...",completed:"готово ✓",stopping:"остановка...",stopped:"остановлено",errorGeneric:"произошла ошибка — проверьте консоль",connError:"ошибка соединения",mixWarn:"⚠ YouTube Mix (радио) бесконечен — будут загружены только первые 50 видео.",mixInfo:"ℹ Это ссылка Mix. Плейлист выключен, будет загружено только это видео.",appClosed:"⚠ Aevum завершил работу — перезапустите приложение, чтобы продолжить.",probeLoading:"загрузка…",clipDownloading:"загрузка клипа…",probeNA:"недоступно",probeVideos:"видео",probeInPlaylist:"ссылка плейлиста",clip:"Клип",clipHint:"необязательно — скачает только этот отрезок",subsSkipped:"субтитры недоступны (пропущены)",clipLossless:"Без перекодирования",clipLosslessHint:"Разрез по ближайшему ключевому кадру — клип может начаться на несколько секунд раньше.",thumbnail:"Обложка",h264Cap:"⚠ У этого видео H.264 доступен только до {h}p — это и скачается.",cookiesLocked:"Chrome больше не отдаёт свои cookies — Firefox ещё работает, Edge и Brave нет.",h264Unsure:"Этот сайт не сообщает кодек. Aevum поищет H.264 и обычно находит, но обещать не может.",h264None:"⚠ У этого видео нет H.264. Вы получите то, что лежит в mp4 — редакторы могут его не принять.",formatMissing:"запрошенный формат недоступен для этого видео",siteChanged:"сайт трижды отклонил загрузку — попробуйте снова или обновите Пакеты в настройках"}
 };
 const LANGS=[['en','English'],['tr','Türkçe'],['es','Español'],['de','Deutsch'],['fr','Français'],['it','Italiano'],['pt','Português'],['ru','Русский']];
 const langMenu=document.getElementById('langMenu'),langCode=document.getElementById('langCode'),langbox=document.getElementById('langbox');
@@ -529,17 +604,17 @@ function selectLang(l){applyLang(l);saveCfg({lang:l});closeLangMenu();}
 function toggleLangMenu(e){e.stopPropagation();langMenu.classList.toggle('open');}
 function closeLangMenu(){langMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(langbox&&!langbox.contains(e.target))closeLangMenu();});
-function statusText(d){const tag=d.item?'['+d.item+'] ':'';const spd=d.speed?' · '+d.speed+' MB/s':'';const tot=d.total?' · '+d.total:'';const eta=d.eta?' · ETA '+d.eta:'';const det=tot+spd+eta;switch(d.code){case 'queued':return T('queued');case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%'+det;case 'clip':return (d.progress>0?T('downloading')+' '+d.progress+'%'+det:T('clipDownloading'));case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed')+(d.subswarn?' — '+T('subsSkipped'):'');case 'stopped':return T('stopped');case 'error':return d.cookieerr?T('cookiesLocked'):d.formaterr?T('formatMissing'):(d.error_line?d.error_line.slice(0,110):T('errorGeneric'));default:return '';}}
+function statusText(d){const tag=d.item?'['+d.item+'] ':'';const spd=d.speed?' · '+d.speed+' MB/s':'';const tot=d.total?' · '+d.total:'';const eta=d.eta?' · ETA '+d.eta:'';const det=tot+spd+eta;switch(d.code){case 'queued':return T('queued');case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%'+det;case 'clip':return (d.progress>0?T('downloading')+' '+d.progress+'%'+det:T('clipDownloading'));case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed')+(d.subswarn?' — '+T('subsSkipped'):'');case 'stopped':return T('stopped');case 'error':return d.cookieerr?T('cookiesLocked'):d.formaterr?T('formatMissing'):d.staleerr?T('siteChanged'):(d.error_line?d.error_line.slice(0,110):T('errorGeneric'));default:return '';}}
 // ── info / guide panel ──
 const INFO_TEXT={
- en:{title:'Guide',items:[['Video / Audio','download the full video, or just its sound (e.g. MP3).'],['Quality','best stream up to that height. Dimmed = not offered for this video; hover shows the size.'],['MP4','the most widely accepted container. H.264 where a site offers it, AV1 or VP9 above 1080p.'],['MKV','takes any codec, so it gets whatever the site offers at its best. Good for archiving.'],['H.264','an MP4 that really is H.264 — best for editors. Sites stop making it above 1080p.'],['WebM','VP9 — best quality per megabyte.'],['Subtitles',"embeds the uploader's own subtitles into the file (does not apply to auto captions)."],['Mute','video only, no audio track.'],['Thumbnail','saves the cover as jpg next to the video, in their own folder.'],['Cookies','use your browser login for members-only content (your own account).'],['Playlist','downloads the whole list into a numbered folder.'],['Clip','downloads only the chosen range — frame-exact, at full speed.'],['Lossless cut','no re-encode: original quality, but the clip may start a few seconds early.']]},
- tr:{title:'Rehber',items:[['Video / Ses','videonun tamamını ya da yalnız sesini (örn. MP3) indirir.'],['Kalite','o yüksekliğe kadarki en iyi akışı seçer. Soluk = bu videoda yok; üzerine gelince boyut görünür.'],['MP4','en yaygın kabul gören kapsayıcı. Site sunuyorsa H.264, 1080p üstünde AV1 ya da VP9.'],['MKV','her kodeği kabul eder, sitenin sunduğu en iyisini getirir. Arşiv için iyi.'],['H.264','gerçekten H.264 olan bir MP4 — kurgu için en iyisi. Siteler 1080p üstünde üretmiyor.'],['WebM','VP9 — megabayt başına en iyi kalite.'],['Altyazı','yükleyicinin kendi altyazısını dosyaya gömer (otomatik altyazılar için geçerli değildir).'],['Sessiz','yalnız görüntü, ses izi yok.'],['Kapak','kapak görselini jpg olarak videonun yanına, kendi klasörüne kaydeder.'],['Çerezler','üyelere özel içerik için tarayıcı oturumunu kullanır (kendi hesabın).'],['Liste','tüm oynatma listesini numaralı bir klasöre indirir.'],['Klip','yalnız seçtiğin aralığı indirir — kare hassasiyetinde ve tam hızda.'],['Kayıpsız kesim','yeniden kodlama yok: orijinal kalite, ama klip birkaç saniye erken başlayabilir.']]},
- es:{title:'Guía',items:[['Vídeo / Audio','descarga el vídeo completo o solo su sonido (p. ej. MP3).'],['Calidad','el mejor stream hasta esa altura. Atenuado = no disponible; al pasar el cursor se ve el tamaño.'],['MP4','el contenedor más aceptado. H.264 si el sitio lo ofrece, AV1 o VP9 por encima de 1080p.'],['MKV','acepta cualquier códec, así que trae lo mejor que ofrezca el sitio. Bueno para archivar.'],['H.264','un MP4 que de verdad es H.264 — ideal para editores. Los sitios no lo hacen por encima de 1080p.'],['WebM','VP9 — la mejor calidad por megabyte.'],['Subtítulos','incrusta los subtítulos propios del autor en el archivo (no aplica a los subtítulos automáticos).'],['Silenciar','solo imagen, sin pista de audio.'],['Miniatura','guarda la portada como jpg junto al vídeo, en su propia carpeta.'],['Cookies','usa tu sesión del navegador para contenido de miembros (tu propia cuenta).'],['Lista','descarga toda la lista en una carpeta numerada.'],['Clip','descarga solo el rango elegido — exacto al fotograma y a toda velocidad.'],['Corte sin pérdida','sin recodificar: calidad original, pero el clip puede empezar unos segundos antes.']]},
- de:{title:'Anleitung',items:[['Video / Audio','lädt das ganze Video oder nur den Ton (z. B. MP3).'],['Qualität','bester Stream bis zu dieser Höhe. Abgeblendet = nicht verfügbar; Hover zeigt die Größe.'],['MP4','der am breitesten unterstützte Container. H.264 wenn die Seite es anbietet, darüber AV1 oder VP9.'],['MKV','nimmt jeden Codec und holt das Beste, was die Seite anbietet. Gut zum Archivieren.'],['H.264','ein MP4, das wirklich H.264 ist — ideal für den Schnitt. Über 1080p gibt es das nicht mehr.'],['WebM','VP9 — beste Qualität pro Megabyte.'],['Untertitel','bettet die eigenen Untertitel des Uploaders in die Datei ein (gilt nicht für automatische Untertitel).'],['Stumm','nur Bild, keine Tonspur.'],['Vorschaubild','speichert das Cover als jpg neben dem Video, in eigenem Ordner.'],['Cookies','nutzt deinen Browser-Login für Mitgliederinhalte (eigenes Konto).'],['Playlist','lädt die ganze Liste in einen nummerierten Ordner.'],['Clip','lädt nur den gewählten Abschnitt — bildgenau, in voller Geschwindigkeit.'],['Verlustfreier Schnitt','keine Neukodierung: Originalqualität, der Clip kann aber ein paar Sekunden früher beginnen.']]},
- fr:{title:'Guide',items:[['Vidéo / Audio','télécharge la vidéo entière ou seulement le son (ex. MP3).'],['Qualité','meilleur flux jusqu\\'à cette hauteur. Grisé = indisponible ; le survol montre la taille.'],['MP4','le conteneur le plus largement accepté. H.264 quand le site en propose, AV1 ou VP9 au-dessus de 1080p.'],['MKV','accepte tous les codecs et prend le meilleur que le site propose. Bon pour archiver.'],['H.264','un MP4 qui est vraiment du H.264 — idéal pour le montage. Les sites cessent au-dessus de 1080p.'],['WebM','VP9 — la meilleure qualité par mégaoctet.'],['Sous-titres','incruste les sous-titres de l\\'auteur dans le fichier (ne s\\'applique pas aux sous-titres automatiques).'],['Muet','image seule, sans piste audio.'],['Miniature','enregistre la jaquette en jpg à côté de la vidéo, dans leur dossier.'],['Cookies','utilise ta session navigateur pour le contenu réservé (ton propre compte).'],['Playlist','télécharge toute la liste dans un dossier numéroté.'],['Clip','télécharge seulement la plage choisie — précis à l\\'image, à pleine vitesse.'],['Coupe sans perte','pas de réencodage : qualité d\\'origine, mais le clip peut commencer quelques secondes plus tôt.']]},
- it:{title:'Guida',items:[['Video / Audio','scarica il video intero o solo l\\'audio (es. MP3).'],['Qualità','il miglior stream fino a quell\\'altezza. Attenuato = non disponibile; al passaggio mostra la dimensione.'],['MP4','il contenitore più supportato. H.264 se il sito lo offre, AV1 o VP9 oltre i 1080p.'],['MKV','accetta qualsiasi codec e prende il meglio che il sito offre. Buono per archiviare.'],['H.264','un MP4 che è davvero H.264 — ideale per il montaggio. Oltre i 1080p i siti non lo fanno.'],['WebM','VP9 — la migliore qualità per megabyte.'],['Sottotitoli','incorpora i sottotitoli dell\\'autore nel file (non vale per i sottotitoli automatici).'],['Muto','solo immagine, nessuna traccia audio.'],['Miniatura','salva la copertina come jpg accanto al video, in una cartella dedicata.'],['Cookie','usa il login del browser per contenuti riservati (il tuo account).'],['Playlist','scarica l\\'intera lista in una cartella numerata.'],['Clip','scarica solo l\\'intervallo scelto — preciso al fotogramma, a piena velocità.'],['Taglio senza perdita','nessuna ricodifica: qualità originale, ma la clip può iniziare qualche secondo prima.']]},
- pt:{title:'Guia',items:[['Vídeo / Áudio','baixa o vídeo inteiro ou só o som (ex. MP3).'],['Qualidade','o melhor stream até essa altura. Esmaecido = indisponível; passar o mouse mostra o tamanho.'],['MP4','o contêiner mais aceito. H.264 quando o site oferece, AV1 ou VP9 acima de 1080p.'],['MKV','aceita qualquer códec e pega o melhor que o site oferece. Bom para arquivar.'],['H.264','um MP4 que é mesmo H.264 — ideal para editores. Os sites não fazem acima de 1080p.'],['WebM','VP9 — a melhor qualidade por megabyte.'],['Legendas','incorpora as legendas do próprio autor no arquivo (não se aplica às legendas automáticas).'],['Mudo','só imagem, sem faixa de áudio.'],['Miniatura','salva a capa como jpg ao lado do vídeo, em pasta própria.'],['Cookies','usa o login do navegador para conteúdo de membros (sua própria conta).'],['Playlist','baixa a lista inteira numa pasta numerada.'],['Clipe','baixa só o trecho escolhido — preciso ao quadro, em velocidade total.'],['Corte sem perdas','sem recodificação: qualidade original, mas o clipe pode começar alguns segundos antes.']]},
- ru:{title:'Справка',items:[['Видео / Аудио','скачивает всё видео или только звук (напр. MP3).'],['Качество','лучший поток до этой высоты. Тусклый = недоступно; при наведении виден размер.'],['MP4','самый широко поддерживаемый контейнер. H.264 если сайт его даёт, выше 1080p — AV1 или VP9.'],['MKV','принимает любой кодек и берёт лучшее, что есть на сайте. Хорош для архива.'],['H.264','MP4, который действительно H.264 — лучше всего для монтажа. Выше 1080p сайты его не делают.'],['WebM','VP9 — лучшее качество на мегабайт.'],['Субтитры','встраивает субтитры автора в файл (не относится к автоматическим субтитрам).'],['Без звука','только изображение, без звуковой дорожки.'],['Обложка','сохраняет обложку в jpg рядом с видео, в отдельной папке.'],['Cookies','использует вход в браузере для контента по подписке (ваш аккаунт).'],['Плейлист','скачивает весь список в нумерованную папку.'],['Клип','скачивает только выбранный отрезок — точно до кадра, на полной скорости.'],['Без перекодирования','оригинальное качество, но клип может начаться на несколько секунд раньше.']]}
+ en:{title:'Guide',items:[['Video / Audio','download the full video, or just its sound (e.g. MP3).'],['Quality','best stream up to that height. Dimmed = not offered for this video; hover shows the size.'],['MP4','the most widely accepted container. H.264 where a site offers it, AV1 or VP9 above 1080p.'],['MKV','takes any codec, so it gets whatever the site offers at its best. Good for archiving.'],['H.264','an MP4 that really is H.264 — best for editors. Sites stop making it above 1080p.'],['WebM','VP9 — best quality per megabyte.'],['Subtitles',"embeds the uploader's own subtitles into the file (does not apply to auto captions)."],['Mute','video only, no audio track.'],['Thumbnail','saves the cover as jpg next to the video, in their own folder.'],['Cookies','use your browser login for members-only content (your own account).'],['Playlist','downloads the whole list into a numbered folder.'],['Clip','downloads only the chosen range — frame-exact, at full speed.'],['Lossless cut','no re-encode: original quality, but the clip may start a few seconds early.'],['Version','checks whether a newer Aevum is out and installs it. Where a copy cannot install itself, the button opens the release page instead.'],['Packages','updates yt-dlp, the piece that goes stale when a site changes. Stable when stable is newer, nightly when only that one works; one click puts the bundled copy back.']]},
+ tr:{title:'Rehber',items:[['Video / Ses','videonun tamamını ya da yalnız sesini (örn. MP3) indirir.'],['Kalite','o yüksekliğe kadarki en iyi akışı seçer. Soluk = bu videoda yok; üzerine gelince boyut görünür.'],['MP4','en yaygın kabul gören kapsayıcı. Site sunuyorsa H.264, 1080p üstünde AV1 ya da VP9.'],['MKV','her kodeği kabul eder, sitenin sunduğu en iyisini getirir. Arşiv için iyi.'],['H.264','gerçekten H.264 olan bir MP4 — kurgu için en iyisi. Siteler 1080p üstünde üretmiyor.'],['WebM','VP9 — megabayt başına en iyi kalite.'],['Altyazı','yükleyicinin kendi altyazısını dosyaya gömer (otomatik altyazılar için geçerli değildir).'],['Sessiz','yalnız görüntü, ses izi yok.'],['Kapak','kapak görselini jpg olarak videonun yanına, kendi klasörüne kaydeder.'],['Çerezler','üyelere özel içerik için tarayıcı oturumunu kullanır (kendi hesabın).'],['Liste','tüm oynatma listesini numaralı bir klasöre indirir.'],['Klip','yalnız seçtiğin aralığı indirir — kare hassasiyetinde ve tam hızda.'],['Kayıpsız kesim','yeniden kodlama yok: orijinal kalite, ama klip birkaç saniye erken başlayabilir.'],["Sürüm","daha yeni bir Aevum çıkmış mı diye bakar ve kurar. Kendini kuramayan bir kopyada sürüm sayfasını açar."],["Paketler","site değişince bayatlayan parçayı, yt-dlp'yi günceller. Stable daha yeniyse onu, yalnızca nightly çalışıyorsa onu alır; tek tıkla pakettekine döner."]]},
+ es:{title:'Guía',items:[['Vídeo / Audio','descarga el vídeo completo o solo su sonido (p. ej. MP3).'],['Calidad','el mejor stream hasta esa altura. Atenuado = no disponible; al pasar el cursor se ve el tamaño.'],['MP4','el contenedor más aceptado. H.264 si el sitio lo ofrece, AV1 o VP9 por encima de 1080p.'],['MKV','acepta cualquier códec, así que trae lo mejor que ofrezca el sitio. Bueno para archivar.'],['H.264','un MP4 que de verdad es H.264 — ideal para editores. Los sitios no lo hacen por encima de 1080p.'],['WebM','VP9 — la mejor calidad por megabyte.'],['Subtítulos','incrusta los subtítulos propios del autor en el archivo (no aplica a los subtítulos automáticos).'],['Silenciar','solo imagen, sin pista de audio.'],['Miniatura','guarda la portada como jpg junto al vídeo, en su propia carpeta.'],['Cookies','usa tu sesión del navegador para contenido de miembros (tu propia cuenta).'],['Lista','descarga toda la lista en una carpeta numerada.'],['Clip','descarga solo el rango elegido — exacto al fotograma y a toda velocidad.'],['Corte sin pérdida','sin recodificar: calidad original, pero el clip puede empezar unos segundos antes.'],['Versión','comprueba si hay un Aevum más nuevo y lo instala. Si esta copia no puede instalarse sola, el botón abre la página de la versión.'],['Paquetes','actualiza yt-dlp, la pieza que se queda atrás cuando un sitio cambia. Estable cuando estable es más nuevo, nightly cuando solo ese funciona; un clic devuelve la copia incluida.']]},
+ de:{title:'Anleitung',items:[['Video / Audio','lädt das ganze Video oder nur den Ton (z. B. MP3).'],['Qualität','bester Stream bis zu dieser Höhe. Abgeblendet = nicht verfügbar; Hover zeigt die Größe.'],['MP4','der am breitesten unterstützte Container. H.264 wenn die Seite es anbietet, darüber AV1 oder VP9.'],['MKV','nimmt jeden Codec und holt das Beste, was die Seite anbietet. Gut zum Archivieren.'],['H.264','ein MP4, das wirklich H.264 ist — ideal für den Schnitt. Über 1080p gibt es das nicht mehr.'],['WebM','VP9 — beste Qualität pro Megabyte.'],['Untertitel','bettet die eigenen Untertitel des Uploaders in die Datei ein (gilt nicht für automatische Untertitel).'],['Stumm','nur Bild, keine Tonspur.'],['Vorschaubild','speichert das Cover als jpg neben dem Video, in eigenem Ordner.'],['Cookies','nutzt deinen Browser-Login für Mitgliederinhalte (eigenes Konto).'],['Playlist','lädt die ganze Liste in einen nummerierten Ordner.'],['Clip','lädt nur den gewählten Abschnitt — bildgenau, in voller Geschwindigkeit.'],['Verlustfreier Schnitt','keine Neukodierung: Originalqualität, der Clip kann aber ein paar Sekunden früher beginnen.'],['Version','sieht nach, ob ein neueres Aevum da ist, und installiert es. Kann eine Kopie sich nicht selbst installieren, öffnet die Schaltfläche die Release-Seite.'],['Pakete','aktualisiert yt-dlp, den Teil, der veraltet, sobald eine Seite sich ändert. Stable, wenn stable neuer ist, nightly, wenn nur das funktioniert; ein Klick stellt die mitgelieferte Kopie wieder her.']]},
+ fr:{title:'Guide',items:[['Vidéo / Audio','télécharge la vidéo entière ou seulement le son (ex. MP3).'],['Qualité','meilleur flux jusqu\\'à cette hauteur. Grisé = indisponible ; le survol montre la taille.'],['MP4','le conteneur le plus largement accepté. H.264 quand le site en propose, AV1 ou VP9 au-dessus de 1080p.'],['MKV','accepte tous les codecs et prend le meilleur que le site propose. Bon pour archiver.'],['H.264','un MP4 qui est vraiment du H.264 — idéal pour le montage. Les sites cessent au-dessus de 1080p.'],['WebM','VP9 — la meilleure qualité par mégaoctet.'],['Sous-titres','incruste les sous-titres de l\\'auteur dans le fichier (ne s\\'applique pas aux sous-titres automatiques).'],['Muet','image seule, sans piste audio.'],['Miniature','enregistre la jaquette en jpg à côté de la vidéo, dans leur dossier.'],['Cookies','utilise ta session navigateur pour le contenu réservé (ton propre compte).'],['Playlist','télécharge toute la liste dans un dossier numéroté.'],['Clip','télécharge seulement la plage choisie — précis à l\\'image, à pleine vitesse.'],['Coupe sans perte','pas de réencodage : qualité d\\'origine, mais le clip peut commencer quelques secondes plus tôt.'],["Version","regarde si un Aevum plus récent existe et l'installe. Si cette copie ne peut pas s'installer seule, le bouton ouvre la page de la version."],["Paquets","met à jour yt-dlp, la pièce qui vieillit dès qu'un site change. Stable quand stable est plus récent, nightly quand lui seul fonctionne ; un clic restaure la copie fournie."]]},
+ it:{title:'Guida',items:[['Video / Audio','scarica il video intero o solo l\\'audio (es. MP3).'],['Qualità','il miglior stream fino a quell\\'altezza. Attenuato = non disponibile; al passaggio mostra la dimensione.'],['MP4','il contenitore più supportato. H.264 se il sito lo offre, AV1 o VP9 oltre i 1080p.'],['MKV','accetta qualsiasi codec e prende il meglio che il sito offre. Buono per archiviare.'],['H.264','un MP4 che è davvero H.264 — ideale per il montaggio. Oltre i 1080p i siti non lo fanno.'],['WebM','VP9 — la migliore qualità per megabyte.'],['Sottotitoli','incorpora i sottotitoli dell\\'autore nel file (non vale per i sottotitoli automatici).'],['Muto','solo immagine, nessuna traccia audio.'],['Miniatura','salva la copertina come jpg accanto al video, in una cartella dedicata.'],['Cookie','usa il login del browser per contenuti riservati (il tuo account).'],['Playlist','scarica l\\'intera lista in una cartella numerata.'],['Clip','scarica solo l\\'intervallo scelto — preciso al fotogramma, a piena velocità.'],['Taglio senza perdita','nessuna ricodifica: qualità originale, ma la clip può iniziare qualche secondo prima.'],['Versione','controlla se è uscito un Aevum più recente e lo installa. Se questa copia non può installarsi da sola, il pulsante apre la pagina della versione.'],['Pacchetti','aggiorna yt-dlp, la parte che invecchia quando un sito cambia. Stable quando stable è più recente, nightly quando funziona solo quello; un clic ripristina la copia inclusa.']]},
+ pt:{title:'Guia',items:[['Vídeo / Áudio','baixa o vídeo inteiro ou só o som (ex. MP3).'],['Qualidade','o melhor stream até essa altura. Esmaecido = indisponível; passar o mouse mostra o tamanho.'],['MP4','o contêiner mais aceito. H.264 quando o site oferece, AV1 ou VP9 acima de 1080p.'],['MKV','aceita qualquer códec e pega o melhor que o site oferece. Bom para arquivar.'],['H.264','um MP4 que é mesmo H.264 — ideal para editores. Os sites não fazem acima de 1080p.'],['WebM','VP9 — a melhor qualidade por megabyte.'],['Legendas','incorpora as legendas do próprio autor no arquivo (não se aplica às legendas automáticas).'],['Mudo','só imagem, sem faixa de áudio.'],['Miniatura','salva a capa como jpg ao lado do vídeo, em pasta própria.'],['Cookies','usa o login do navegador para conteúdo de membros (sua própria conta).'],['Playlist','baixa a lista inteira numa pasta numerada.'],['Clipe','baixa só o trecho escolhido — preciso ao quadro, em velocidade total.'],['Corte sem perdas','sem recodificação: qualidade original, mas o clipe pode começar alguns segundos antes.'],['Versão','verifica se saiu um Aevum mais novo e o instala. Se esta cópia não puder se instalar sozinha, o botão abre a página da versão.'],['Pacotes','atualiza o yt-dlp, a peça que envelhece quando um site muda. Stable quando stable é mais novo, nightly quando só ele funciona; um clique volta à cópia incluída.']]},
+ ru:{title:'Справка',items:[['Видео / Аудио','скачивает всё видео или только звук (напр. MP3).'],['Качество','лучший поток до этой высоты. Тусклый = недоступно; при наведении виден размер.'],['MP4','самый широко поддерживаемый контейнер. H.264 если сайт его даёт, выше 1080p — AV1 или VP9.'],['MKV','принимает любой кодек и берёт лучшее, что есть на сайте. Хорош для архива.'],['H.264','MP4, который действительно H.264 — лучше всего для монтажа. Выше 1080p сайты его не делают.'],['WebM','VP9 — лучшее качество на мегабайт.'],['Субтитры','встраивает субтитры автора в файл (не относится к автоматическим субтитрам).'],['Без звука','только изображение, без звуковой дорожки.'],['Обложка','сохраняет обложку в jpg рядом с видео, в отдельной папке.'],['Cookies','использует вход в браузере для контента по подписке (ваш аккаунт).'],['Плейлист','скачивает весь список в нумерованную папку.'],['Клип','скачивает только выбранный отрезок — точно до кадра, на полной скорости.'],['Без перекодирования','оригинальное качество, но клип может начаться на несколько секунд раньше.'],['Версия','проверяет, вышла ли более новая Aevum, и устанавливает её. Если копия не может установиться сама, кнопка открывает страницу релиза.'],['Пакеты','обновляет yt-dlp — часть, которая устаревает, когда сайт меняется. Stable, если он новее, nightly, когда работает только он; один клик возвращает копию из пакета.']]}
 };
 const infoPanel=document.getElementById('infoPanel'),infobox=document.getElementById('infobox');
 function renderInfo(){const L=INFO_TEXT[curLang]||INFO_TEXT.en;document.getElementById('infoTitle').textContent=L.title;document.getElementById('infoList').innerHTML=L.items.map(([b,t])=>'<div class="info-item"><b>'+b+'</b> — '+t+'</div>').join('');}
@@ -575,32 +650,105 @@ function closeThemeMenu(){themeMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(themebox&&!themebox.contains(e.target))closeThemeMenu();});
 // ── settings ──
 const SETTINGS_TEXT={
- en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.',updGet:'Update',updNew:'{v} is out.',updLatest:'This is the newest version.',updManual:'{v} is out - get it from the releases page.',updWorking:'downloading... {p}%',updDone:'Downloaded next to the current file. Close Aevum and swap the two.',updStarted:'Installer started - Aevum is closing.',updFail:'Update failed.',updBusy:'A download is running. Let it finish first.'},
- tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın.",updGet:'Güncelle',updNew:'{v} çıktı.',updLatest:'En güncel sürümdesin.',updManual:'{v} çıktı - sürümler sayfasından indir.',updWorking:'iniyor... %{p}',updDone:'Yenisi mevcut dosyanın yanına indi. Aevum kapandıktan sonra ikisini değiştir.',updStarted:'Kurulum başladı - Aevum kapanıyor.',updFail:'Güncelleme başarısız.',updBusy:'Bir indirme sürüyor. Önce onun bitmesini bekle.'},
- es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con el sistema y espera en la bandeja — ábrelo cuando lo necesites.',menu:'Añadir al menú',menuHint:'Instala Aevum en el menú de aplicaciones — ábrelo como una app normal, sin terminal.',updGet:'Actualizar',updNew:'{v} ya está disponible.',updLatest:'Tienes la última versión.',updManual:'{v} ya está - descárgalo desde la página de versiones.',updWorking:'descargando... {p}%',updDone:'Descargado junto al actual. Cierra Aevum y cambia uno por otro.',updStarted:'Instalador iniciado - Aevum se está cerrando.',updFail:'No se pudo actualizar.',updBusy:'Hay una descarga en curso. Espera a que termine.'},
- de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit dem System und wartet im Infobereich — öffne es bei Bedarf.',menu:'Zum App-Menü hinzufügen',menuHint:'Installiert Aevum ins Anwendungsmenü — starte es wie eine normale App, ohne Terminal.',updGet:'Aktualisieren',updNew:'{v} ist da.',updLatest:'Du hast die neueste Version.',updManual:'{v} ist da - hol es von der Releases-Seite.',updWorking:'lädt... {p}%',updDone:'Neben der aktuellen Datei gespeichert. Aevum schließen und tauschen.',updStarted:'Installer gestartet - Aevum wird beendet.',updFail:'Update fehlgeschlagen.',updBusy:'Ein Download läuft. Warte, bis er fertig ist.'},
- fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec le système et attend dans la barre — ouvre-le au besoin.',menu:'Ajouter au menu',menuHint:"Installe Aevum dans le menu des applications — lance-le comme une app normale, sans terminal.",updGet:'Mettre à jour',updNew:'{v} est disponible.',updLatest:'Tu as la dernière version.',updManual:'{v} est disponible - récupère-le sur la page des versions.',updWorking:'téléchargement... {p}%',updDone:'Téléchargé à côté du fichier actuel. Ferme Aevum et remplace-le.',updStarted:'Installateur lancé - Aevum se ferme.',updFail:'Mise à jour impossible.',updBusy:'Un téléchargement est en cours. Attends la fin.'},
- it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con il sistema e resta nella barra — aprilo quando serve.',menu:'Aggiungi al menu',menuHint:'Installa Aevum nel menu delle applicazioni — avvialo come una normale app, senza terminale.',updGet:'Aggiorna',updNew:'{v} è uscita.',updLatest:'Hai la versione più recente.',updManual:'{v} è uscita - scaricala dalla pagina delle versioni.',updWorking:'download... {p}%',updDone:'Scaricato accanto al file attuale. Chiudi Aevum e sostituiscilo.',updStarted:'Installer avviato - Aevum si sta chiudendo.',updFail:'Aggiornamento non riuscito.',updBusy:'Un download è in corso. Aspetta che finisca.'},
- pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o sistema e espera na bandeja — abra quando precisar.',menu:'Adicionar ao menu',menuHint:'Instala o Aevum no menu de aplicativos — abra como um app normal, sem terminal.',updGet:'Atualizar',updNew:'{v} saiu.',updLatest:'Você tem a versão mais recente.',updManual:'{v} saiu - baixe na página de versões.',updWorking:'baixando... {p}%',updDone:'Baixado ao lado do atual. Feche o Aevum e troque os dois.',updStarted:'Instalador iniciado - o Aevum está fechando.',updFail:'Falha ao atualizar.',updBusy:'Há um download em andamento. Espere terminar.'},
- ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.',updGet:'Обновить',updNew:'Вышла {v}.',updLatest:'У вас последняя версия.',updManual:'Вышла {v} - скачайте со страницы релизов.',updWorking:'загрузка... {p}%',updDone:'Загружено рядом с текущим файлом. Закройте Aevum и замените его.',updStarted:'Установщик запущен - Aevum закрывается.',updFail:'Не удалось обновить.',updBusy:'Идёт загрузка. Дождитесь её окончания.'}
+ en:{settings:'Settings',startup:'Launch at startup',startupHint:'Aevum starts with the system and waits quietly in the tray — open it whenever you need it.',menu:'Add to app menu',menuHint:'Installs Aevum into your app menu — launch it like a regular app, no terminal needed.',updGet:'Update',updNew:'{v} is out.',updLatest:'This is the newest version.',updManual:'{v} is out - get it from the releases page.',updWorking:'downloading... {p}%',updDone:'Downloaded next to the current file. Close Aevum and swap the two.',updStarted:'Installer started - Aevum is closing.',updFail:'Update failed.',updBusy:'A download is running. Let it finish first.',pkgName:'Packages',pkgLatest:'{v} — up to date.',pkgNew:'{v} is available.',pkgWorking:'updating...',pkgDone:'Updated to {v}.',pkgFail:'Could not update.',pkgRevert:'back to the bundled version',pkgAdvice:'Nightly builds come out daily. Unless downloads keep failing with 403, there is nothing here you need.'},
+ tr:{settings:'Ayarlar',startup:'Başlangıçta aç',startupHint:'Aevum, sistemle birlikte başlar ve tepside sessizce bekler — gerektiğinde açarsın.',menu:'Uygulama menüsüne kur',menuHint:"Aevum'u uygulama menüsüne kurar — terminale gerek kalmadan normal bir uygulama gibi başlatırsın.",updGet:'Güncelle',updNew:'{v} çıktı.',updLatest:'En güncel sürümdesin.',updManual:'{v} çıktı - sürümler sayfasından indir.',updWorking:'iniyor... %{p}',updDone:'Yenisi mevcut dosyanın yanına indi. Aevum kapandıktan sonra ikisini değiştir.',updStarted:'Kurulum başladı - Aevum kapanıyor.',updFail:'Güncelleme başarısız.',updBusy:'Bir indirme sürüyor. Önce onun bitmesini bekle.',pkgName:'Paketler',pkgLatest:'{v} — güncel.',pkgNew:'{v} çıktı.',pkgWorking:'güncelleniyor...',pkgDone:'{v} sürümüne güncellendi.',pkgFail:'Güncellenemedi.',pkgRevert:'pakettekine dön',pkgAdvice:'Nightly her gün çıkar. İndirmelerin sık sık 403 hatası vermiyorsa güncellemene gerek yok.'},
+ es:{settings:'Ajustes',startup:'Abrir al inicio',startupHint:'Aevum se inicia con el sistema y espera en la bandeja — ábrelo cuando lo necesites.',menu:'Añadir al menú',menuHint:'Instala Aevum en el menú de aplicaciones — ábrelo como una app normal, sin terminal.',updGet:'Actualizar',updNew:'{v} ya está disponible.',updLatest:'Tienes la última versión.',updManual:'{v} ya está - descárgalo desde la página de versiones.',updWorking:'descargando... {p}%',updDone:'Descargado junto al actual. Cierra Aevum y cambia uno por otro.',updStarted:'Instalador iniciado - Aevum se está cerrando.',updFail:'No se pudo actualizar.',updBusy:'Hay una descarga en curso. Espera a que termine.',pkgName:'Paquetes',pkgLatest:'{v} — al día.',pkgNew:'{v} ya está disponible.',pkgWorking:'actualizando...',pkgDone:'Actualizado a {v}.',pkgFail:'No se pudo actualizar.',pkgRevert:'volver a la versión incluida',pkgAdvice:'Las nightly salen a diario. Si tus descargas no fallan con 403, aquí no necesitas nada.'},
+ de:{settings:'Einstellungen',startup:'Beim Start öffnen',startupHint:'Aevum startet mit dem System und wartet im Infobereich — öffne es bei Bedarf.',menu:'Zum App-Menü hinzufügen',menuHint:'Installiert Aevum ins Anwendungsmenü — starte es wie eine normale App, ohne Terminal.',updGet:'Aktualisieren',updNew:'{v} ist da.',updLatest:'Du hast die neueste Version.',updManual:'{v} ist da - hol es von der Releases-Seite.',updWorking:'lädt... {p}%',updDone:'Neben der aktuellen Datei gespeichert. Aevum schließen und tauschen.',updStarted:'Installer gestartet - Aevum wird beendet.',updFail:'Update fehlgeschlagen.',updBusy:'Ein Download läuft. Warte, bis er fertig ist.',pkgName:'Pakete',pkgLatest:'{v} — aktuell.',pkgNew:'{v} ist verfügbar.',pkgWorking:'wird aktualisiert...',pkgDone:'Auf {v} aktualisiert.',pkgFail:'Aktualisierung fehlgeschlagen.',pkgRevert:'zurück zur mitgelieferten Version',pkgAdvice:'Nightly-Builds erscheinen täglich. Solange Downloads nicht ständig mit 403 scheitern, brauchst du hier nichts.'},
+ fr:{settings:'Paramètres',startup:'Lancer au démarrage',startupHint:'Aevum démarre avec le système et attend dans la barre — ouvre-le au besoin.',menu:'Ajouter au menu',menuHint:"Installe Aevum dans le menu des applications — lance-le comme une app normale, sans terminal.",updGet:'Mettre à jour',updNew:'{v} est disponible.',updLatest:'Tu as la dernière version.',updManual:'{v} est disponible - récupère-le sur la page des versions.',updWorking:'téléchargement... {p}%',updDone:'Téléchargé à côté du fichier actuel. Ferme Aevum et remplace-le.',updStarted:'Installateur lancé - Aevum se ferme.',updFail:'Mise à jour impossible.',updBusy:'Un téléchargement est en cours. Attends la fin.',pkgName:'Paquets',pkgLatest:'{v} — à jour.',pkgNew:'{v} est disponible.',pkgWorking:'mise à jour...',pkgDone:'Mis à jour vers {v}.',pkgFail:'Mise à jour impossible.',pkgRevert:'revenir à la version fournie',pkgAdvice:"Les nightly sortent chaque jour. Tant que vos téléchargements n'échouent pas en 403, vous n'avez besoin de rien ici."},
+ it:{settings:'Impostazioni',startup:"Avvia all'avvio",startupHint:'Aevum si avvia con il sistema e resta nella barra — aprilo quando serve.',menu:'Aggiungi al menu',menuHint:'Installa Aevum nel menu delle applicazioni — avvialo come una normale app, senza terminale.',updGet:'Aggiorna',updNew:'{v} è uscita.',updLatest:'Hai la versione più recente.',updManual:'{v} è uscita - scaricala dalla pagina delle versioni.',updWorking:'download... {p}%',updDone:'Scaricato accanto al file attuale. Chiudi Aevum e sostituiscilo.',updStarted:'Installer avviato - Aevum si sta chiudendo.',updFail:'Aggiornamento non riuscito.',updBusy:'Un download è in corso. Aspetta che finisca.',pkgName:'Pacchetti',pkgLatest:'{v} — aggiornato.',pkgNew:'{v} è disponibile.',pkgWorking:'aggiornamento...',pkgDone:'Aggiornato a {v}.',pkgFail:'Aggiornamento non riuscito.',pkgRevert:'torna alla versione inclusa',pkgAdvice:'Le nightly escono ogni giorno. Se i download non falliscono con 403, qui non ti serve nulla.'},
+ pt:{settings:'Configurações',startup:'Abrir ao iniciar',startupHint:'O Aevum inicia com o sistema e espera na bandeja — abra quando precisar.',menu:'Adicionar ao menu',menuHint:'Instala o Aevum no menu de aplicativos — abra como um app normal, sem terminal.',updGet:'Atualizar',updNew:'{v} saiu.',updLatest:'Você tem a versão mais recente.',updManual:'{v} saiu - baixe na página de versões.',updWorking:'baixando... {p}%',updDone:'Baixado ao lado do atual. Feche o Aevum e troque os dois.',updStarted:'Instalador iniciado - o Aevum está fechando.',updFail:'Falha ao atualizar.',updBusy:'Há um download em andamento. Espere terminar.',pkgName:'Pacotes',pkgLatest:'{v} — atualizado.',pkgNew:'{v} está disponível.',pkgWorking:'atualizando...',pkgDone:'Atualizado para {v}.',pkgFail:'Falha ao atualizar.',pkgRevert:'voltar à versão incluída',pkgAdvice:'As nightly saem todo dia. Se os downloads não falham com 403, aqui você não precisa de nada.'},
+ ru:{settings:'Настройки',startup:'Запуск при старте',startupHint:'Aevum запускается вместе с системой и ждёт в трее — откройте, когда понадобится.',menu:'Добавить в меню',menuHint:'Устанавливает Aevum в меню приложений — запускайте как обычное приложение, без терминала.',updGet:'Обновить',updNew:'Вышла {v}.',updLatest:'У вас последняя версия.',updManual:'Вышла {v} - скачайте со страницы релизов.',updWorking:'загрузка... {p}%',updDone:'Загружено рядом с текущим файлом. Закройте Aevum и замените его.',updStarted:'Установщик запущен - Aevum закрывается.',updFail:'Не удалось обновить.',updBusy:'Идёт загрузка. Дождитесь её окончания.',pkgName:'Пакеты',pkgLatest:'{v} — актуально.',pkgNew:'Доступна {v}.',pkgWorking:'обновление...',pkgDone:'Обновлено до {v}.',pkgFail:'Не удалось обновить.',pkgRevert:'вернуться к версии из пакета',pkgAdvice:'Nightly выходят каждый день. Пока загрузки не падают с 403, здесь ничего не нужно.'}
 };
 const settingsPanel=document.getElementById('settingsPanel'),settingsbox=document.getElementById('settingsbox'),settingsTitle=document.getElementById('settingsTitle'),settingsStartupLabel=document.getElementById('settingsStartupLabel'),settingsHint=document.getElementById('settingsHint'),startupToggle=document.getElementById('startupToggle');
 const menuRow=document.getElementById('menuRow'),menuToggle=document.getElementById('menuToggle'),settingsMenuLabel=document.getElementById('settingsMenuLabel'),settingsMenuHint=document.getElementById('settingsMenuHint'),startupRow=document.getElementById('startupRow');
 function TS(k){const L=SETTINGS_TEXT[curLang]||SETTINGS_TEXT.en;return L[k]||SETTINGS_TEXT.en[k]||k;}
-function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');settingsMenuLabel.textContent=TS('menu');settingsMenuHint.textContent=TS('menuHint');renderUpd();}
-// ── Updating Aevum itself ──
+function renderSettings(){settingsTitle.textContent=TS('settings');settingsStartupLabel.textContent=TS('startup');settingsHint.textContent=TS('startupHint');settingsMenuLabel.textContent=TS('menu');settingsMenuHint.textContent=TS('menuHint');renderUpd();renderPkg();}
+// ── Updating Aevum, and the packages under it ──
 // The check runs when the panel opens, not at launch: nobody wants a
-// download tool phoning home before it has been asked to do anything.
-const updLine=document.getElementById('updLine'),updBtn=document.getElementById('updBtn'),updHint=document.getElementById('updHint');
-let updInfo=null,updState=null,updTimer=null,updAsked=false;
+// download tool phoning home before it has been asked to do anything. The
+// button repeats it on demand.
+//
+// Both lines wear the same control, which is four things in turn: a pair of
+// circling arrows that looks, a down arrow that offers, a ring that fills,
+// and a tick. Which one it is showing decides what pressing it does, so the
+// state lives on the button instead of in a variable somebody has to keep in
+// step with it.
+const ICON_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
++'<g class="lyr ic-ref"><polyline points="20.5 5 20.5 10 15.5 10"/><polyline points="3.5 19 3.5 14 8.5 14"/>'
++'<path d="M5.2 9.2A7.6 7.6 0 0 1 18 6.3l2.5 2.4"/><path d="M18.8 14.8A7.6 7.6 0 0 1 6 17.7l-2.5-2.4"/></g>'
++'<g class="lyr ic-dl"><path d="M12 4.5v9.7"/><polyline points="7.8 10 12 14.2 16.2 10"/><line x1="5.5" y1="19.5" x2="18.5" y2="19.5"/></g>'
++'<g class="lyr ic-ok"><polyline class="ok-path" points="19.5 7 10 16.5 4.5 11"/></g>'
++'<g class="lyr ic-ring"><circle class="ring-bg" cx="12" cy="12" r="9"/><circle class="ring-fg" cx="12" cy="12" r="9"/></g></svg>';
+const RING=2*Math.PI*9;
+function makeIcon(btn,onPress){
+  btn.innerHTML=ICON_SVG;
+  const L={ref:btn.querySelector('.ic-ref'),dl:btn.querySelector('.ic-dl'),ok:btn.querySelector('.ic-ok'),ring:btn.querySelector('.ic-ring')};
+  const fg=btn.querySelector('.ring-fg');
+  let st='idle',timer=null,scanAt=0;
+  function set(s,pct){
+    if(timer){clearTimeout(timer);timer=null;}
+    st=s;btn.className='iconbtn st-'+s;
+    const key=s==='found'?'dl':s==='done'?'ok':s==='work'?'ring':'ref';
+    for(const k in L)L[k].classList.toggle('on',k===key);
+    if(s==='work'){
+      // A real percentage where there is one, a chasing arc where there is
+      // not: yt-dlp updates itself and never says how far along it is.
+      const known=(pct!==null&&pct!==undefined&&!isNaN(pct));
+      L.ring.classList.toggle('spin',!known);
+      if(known)fg.style.strokeDashoffset=(RING*(1-Math.min(100,Math.max(0,pct))/100)).toFixed(1);
+    }else{L.ring.classList.remove('spin');fg.style.transition='';fg.style.strokeDashoffset=RING;}
+    if(s==='scan')scanAt=Date.now();
+    if(s==='done')timer=setTimeout(function(){set('idle');},2400);
+  }
+  // The close of a finished update: the ring empties and runs itself round
+  // once more, and only then does the tick appear. Ending on the last byte
+  // reads like something was cut off, and a chasing arc that simply stops
+  // reads like it gave up. Scans that found nothing skip this and tick
+  // straight away — there was no work to round off.
+  function finish(){
+    if(timer){clearTimeout(timer);timer=null;}
+    st='work';btn.className='iconbtn st-work';
+    for(const k in L)L[k].classList.toggle('on',k==='ring');
+    L.ring.classList.remove('spin');
+    fg.style.transition='none';fg.style.strokeDashoffset=RING;
+    void btn.offsetWidth;                     // let the empty ring be painted
+    fg.style.transition='stroke-dashoffset .5s ease';fg.style.strokeDashoffset=0;
+    timer=setTimeout(function(){set('done');},560);
+  }
+  // A cached answer arrives in twenty milliseconds and the whole scan becomes
+  // a flicker that reads as nothing having happened. Hold it long enough to
+  // be seen, then land on what it found.
+  function settle(next,pct){
+    if(timer)clearTimeout(timer);
+    timer=setTimeout(function(){set(next,pct);},Math.max(0,700-(Date.now()-scanAt)));
+  }
+  btn.addEventListener('click',function(e){e.stopPropagation();onPress(st);});
+  set('idle');
+  return {set:set,settle:settle,finish:finish,at:function(){return st;}};
+}
+const updLine=document.getElementById('updLine'),updBtn=document.getElementById('updBtn'),updHint=document.getElementById('updHint'),updNewTag=document.getElementById('updNewTag');
+let updInfo=null,updState=null,updTimer=null,updAsked=false,appVer='';
+// Some builds cannot install their own update — a copy running from source
+// has no package to fetch. Saying so in the hint and then doing nothing when
+// pressed is a dead end, so the button opens the release page instead.
+const updIcon=makeIcon(updBtn,function(s){
+  if(s==='found'){
+    if(updInfo&&updInfo.canApply)applyUpdate();
+    // The address comes off the network, and "open whatever the server
+    // said" is a habit worth not having: a javascript: or data: URL would
+    // run in this page. It takes one comparison to require a real link.
+    else if(updInfo&&updInfo.page&&updInfo.page.indexOf('https://')===0)
+      window.open(updInfo.page,'_blank','noopener');
+  }else if(s!=='work')checkUpdate();});
 function renderUpd(){
-  if(!updInfo){updLine.textContent='Aevum';updHint.textContent='';updBtn.style.display='none';return;}
-  updLine.textContent='Aevum '+updInfo.current;
-  updBtn.textContent=TS('updGet');
+  // The version comes from /settings, which asks nothing of the network, so
+  // the line is filled in before any scan and stays filled if none is run.
+  const cur=(updInfo&&updInfo.current)||appVer;
+  updLine.textContent='Aevum'+(cur?' '+cur:'');
+  updBtn.title=TS('updGet');
+  const tag=(updInfo&&updInfo.ok&&updInfo.newer)?updInfo.latest:'';
+  updNewTag.textContent=tag;updNewTag.classList.toggle('on',!!tag);
   if(updState&&updState.stage!=='idle'){
-    // An error is a dead end without this: the panel would sit on the
-    // message with no way back short of reloading the page.
-    updBtn.style.display=(updState.stage==='error'&&updInfo&&updInfo.newer&&updInfo.canApply)?'':'none';
     const s=updState.stage;
     updHint.textContent = s==='download' ? TS('updWorking').replace('{p}',updState.pct||0)
                         : s==='launched' ? TS('updStarted')
@@ -609,26 +757,114 @@ function renderUpd(){
                         : '';
     return;
   }
-  if(!updInfo.ok){updHint.textContent='';updBtn.style.display='none';return;}
-  if(updInfo.newer){
-    updHint.textContent=TS(updInfo.canApply?'updNew':'updManual').replace('{v}',updInfo.latest);
-    updBtn.style.display=updInfo.canApply?'':'none';
-  }else{updHint.textContent=TS('updLatest');updBtn.style.display='none';}
+  if(!updInfo||!updInfo.ok){updHint.textContent='';return;}
+  updHint.textContent=updInfo.newer?TS(updInfo.canApply?'updNew':'updManual').replace('{v}',updInfo.latest)
+                                   :TS('updLatest');
 }
-function checkUpdate(){fetch('/update/check').then(r=>r.json()).then(d=>{updInfo=d;renderUpd();}).catch(()=>{});}
+// The header is what makes this a request only this page can send: it turns
+// the call into a preflighted one, and nothing here answers a preflight.
+function checkUpdate(quiet){
+  if(!quiet){updState=null;updIcon.set('scan');}
+  renderUpd();
+  fetch('/update/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updInfo=d;renderUpd();
+    if(!quiet)updIcon.settle(!d.ok?'idle':d.newer?'found':'done');
+  }).catch(function(){if(!quiet)updIcon.settle('idle');});}
 function pollUpd(){fetch('/update/status').then(r=>r.json()).then(d=>{updState=d;renderUpd();
-  if(d.stage!=='download'&&updTimer){clearInterval(updTimer);updTimer=null;}}).catch(()=>{});}
-function applyUpdate(){updBtn.style.display='none';updState={stage:'download',pct:0};renderUpd();
-  fetch('/update/apply',{method:'POST',headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updState=d;renderUpd();
-    if(!updTimer)updTimer=setInterval(pollUpd,800);}).catch(()=>{updState={stage:'error',msg:''};renderUpd();});}
+  if(d.stage==='download'){updIcon.set('work',d.pct||0);return;}
+  if(updTimer){clearInterval(updTimer);updTimer=null;}
+  if(d.stage==='error')updIcon.set('idle');else updIcon.finish();}).catch(()=>{});}
+// A refused start comes back as a 409 with a body, which fetch is happy to
+// call an answer. Polling after one wipes the reason off the panel within a
+// second, because the server never entered "download" and its first status
+// reply says so. Only a request that was accepted gets a poll timer.
+function applyUpdate(){updState={stage:'download',pct:0};updIcon.set('work',0);renderUpd();
+  fetch('/update/apply',{method:'POST',headers:{'X-Aevum':'1'}})
+    .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
+    .then(x=>{updState=x.body;renderUpd();
+      if(!x.ok){updIcon.set('idle');return;}
+      if(!updTimer)updTimer=setInterval(pollUpd,800);})
+    .catch(function(){updState={stage:'error',msg:''};updIcon.set('idle');renderUpd();});}
+// ── Updating yt-dlp, kept as its own line ──
+// Two different things wear two different buttons: this one is the piece
+// that goes stale between releases, and it moves on its own schedule.
+const pkgLine=document.getElementById('pkgLine'),pkgBtn=document.getElementById('pkgBtn'),pkgHint=document.getElementById('pkgHint'),pkgRevert=document.getElementById('pkgRevert'),pkgNewTag=document.getElementById('pkgNewTag'),pkgAdvice=document.getElementById('pkgAdvice');
+let pkgInfo=null,pkgState=null,pkgTimer=null,pkgVer='';
+const pkgIcon=makeIcon(pkgBtn,function(s){if(s==='found')applyPkg();else if(s!=='work')checkPkg();});
+function renderPkg(){
+  // The name alone on this line, and the version in the hint under it: a
+  // yt-dlp version is a date, and "Paketler 2026.07.04" plus a found version
+  // plus a button is wider than this panel.
+  pkgLine.textContent=TS('pkgName');
+  pkgBtn.title=TS('updGet');
+  // Standing note, not a status. A nightly is cut every day, so this line
+  // will nearly always have something on offer, and a button that always
+  // wants pressing teaches people to press it without asking why. The
+  // reason to press it is that downloads are failing.
+  pkgAdvice.textContent=TS('pkgAdvice');
+  pkgRevert.textContent=TS('pkgRevert');
+  pkgRevert.style.display=(pkgInfo&&pkgInfo.custom&&(!pkgState||pkgState.stage!=='working'))?'':'none';
+  const tag=(pkgInfo&&pkgInfo.ok&&pkgInfo.newer)?pkgInfo.latest:'';
+  pkgNewTag.textContent=tag;pkgNewTag.classList.toggle('on',!!tag);
+  if(pkgState&&pkgState.stage&&pkgState.stage!=='idle'){
+    const s=pkgState.stage;
+    pkgHint.textContent = s==='working' ? TS('pkgWorking')
+                        : s==='done'    ? TS('pkgDone').replace('{v}',pkgState.version||'')
+                        : s==='error'   ? (pkgState.busy?TS('updBusy'):TS('pkgFail')+(pkgState.msg?' ('+pkgState.msg+')':''))
+                        : '';
+    return;
+  }
+  const cur=(pkgInfo&&pkgInfo.current)||pkgVer;
+  if(!pkgInfo||!pkgInfo.ok){pkgHint.textContent=cur;return;}
+  // Which channel it would move to, said out loud: "2026.09.01 stable" and
+  // "2026.09.05 nightly" are different offers and the difference matters.
+  pkgHint.textContent=pkgInfo.newer
+    ?TS('pkgNew').replace('{v}',pkgInfo.latest+(pkgInfo.channel?' '+pkgInfo.channel:''))
+    :TS('pkgLatest').replace('{v}',cur);
+}
+// quiet: refresh what is on the line without playing the scan again. Used
+// after an update, where the tick has just been earned and starting a new
+// scan animation on top of it would wipe it.
+function checkPkg(quiet){
+  if(!quiet){pkgState=null;pkgIcon.set('scan');}
+  renderPkg();
+  fetch('/packages/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{pkgInfo=d;renderPkg();
+    if(!quiet)pkgIcon.settle(!d.ok?'idle':d.newer?'found':'done');
+  }).catch(function(){if(!quiet)pkgIcon.settle('idle');});}
+function pollPkg(){fetch('/packages/status').then(r=>r.json()).then(d=>{pkgState=d;renderPkg();
+  if(d.stage==='working')return;
+  if(pkgTimer){clearInterval(pkgTimer);pkgTimer=null;}
+  if(d.stage==='error'){pkgIcon.set('idle');return;}
+  pkgIcon.finish();checkPkg(true);}).catch(()=>{});}
+function applyPkg(){pkgState={stage:'working'};pkgIcon.set('work',null);renderPkg();
+  fetch('/packages/apply',{method:'POST',headers:{'X-Aevum':'1'}})
+    .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
+    .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};pkgIcon.set('idle');renderPkg();return;}
+      pkgState=x.body;renderPkg();
+      // Nothing newer on either channel: the server says so without starting
+      // anything, so there is no ring to round off. Straight to the tick.
+      if(x.body.stage!=='working'){pkgIcon.set('done');checkPkg(true);return;}
+      if(!pkgTimer)pkgTimer=setInterval(pollPkg,900);}).catch(function(){pkgState={stage:'error',msg:''};pkgIcon.set('idle');renderPkg();});}
+// A refusal here arrives as a 409 with a body, which fetch treats as a
+// perfectly good answer. Reading only the body would swallow it: the user
+// presses the link during a download, nothing happens, nothing is said.
+function revertPkg(){fetch('/packages/revert',{method:'POST',headers:{'X-Aevum':'1'}})
+  .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
+  .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};pkgIcon.set('idle');renderPkg();return;}
+    pkgState=null;pkgIcon.set('done');checkPkg(true);}).catch(()=>{});}
 function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');
-  if(settingsPanel.classList.contains('open')&&!updAsked){updAsked=true;checkUpdate();}}
+  if(settingsPanel.classList.contains('open')){
+    // "Updated to X" has been read by now. Without this it stays on the line
+    // for the rest of the session, hiding the version it just installed.
+    if(pkgState&&pkgState.stage==='done'){pkgState=null;renderPkg();}
+    if(!updAsked){updAsked=true;checkUpdate();checkPkg();}
+  }}
 function closeSettings(){settingsPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(settingsbox&&!settingsbox.contains(e.target))closeSettings();});
-function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).catch(()=>{});}
-function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';if(s.lang&&I18N[s.lang]&&s.lang!==curLang)applyLang(s.lang);if(s.theme&&THEME_LIST.some(x=>x[0]===s.theme)&&s.theme!==curTheme)applyTheme(s.theme);}).catch(()=>{});}
-function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startup:on})}).catch(()=>{});}
-function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
+function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify(o)}).catch(()=>{});}
+function loadSettings(){fetch('/settings',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;
+  appVer=s.version||'';pkgVer=s.pkgVersion||'';renderUpd();renderPkg();const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';if(s.lang&&I18N[s.lang]&&s.lang!==curLang)applyLang(s.lang);if(s.theme&&THEME_LIST.some(x=>x[0]===s.theme)&&s.theme!==curTheme)applyTheme(s.theme);}).catch(()=>{});}
+function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({startup:on})}).catch(()=>{});}
+function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
 // ── full-window interactive particle network ──
 const cv=document.getElementById('bg'),cx=cv.getContext('2d',{alpha:true});
 const REDUCE=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -1270,6 +1506,52 @@ _DL_TOTAL_RE = re.compile(r"of\s+~?\s*([\d.]+)(K|M|G)iB")
 # compute one (clip downloads run through ffmpeg, not yt-dlp's reporter)
 _FF_SIZE_RE = re.compile(r"size=\s*(\d+)(KiB|kB)")
 
+# Failures worth simply running again. YouTube hands out a media URL and then
+# refuses it, sometimes before the first byte and sometimes halfway through,
+# and the refusal belongs to that URL: a second run extracts a fresh one and
+# usually walks straight through. Measured on the version that shipped in
+# 1.2.5: 29% of single attempts failed, and 0 of 10 downloads failed when
+# allowed three. yt-dlp itself will not do this — a 403 means "this URL is
+# void", so it gives up rather than hammer a dead link, and it is right to.
+# Retrying is our job because we can afford a whole new extraction.
+#
+# Only failures that a new attempt could plausibly fix belong here. A private
+# video, a refused format, a bad link: those are final, and putting them in
+# this list would only make a hopeless download take three times as long to
+# admit it. 429 is left out on purpose — being told to slow down is not an
+# invitation to try again two seconds later.
+_RETRYABLE_RE = re.compile(
+    r"HTTP Error (?:403|408|5\d\d)"
+    r"|Connection reset|Read timed out|timed out|Connection aborted"
+    r"|Remote end closed connection|IncompleteRead|Unable to download webpage",
+    re.I)
+_MAX_ATTEMPTS = 3
+_RETRY_PAUSE = 2.0
+
+# Worth trying again is a wider set than worth blaming the site for. A reset
+# connection or a timeout is usually this end of the wire — the wifi went, the
+# laptop slept — and telling someone the site refused them, while hiding the
+# line that said what really happened, is worse than saying nothing. Only an
+# outright refusal earns that message.
+_REFUSED_RE = re.compile(r"HTTP Error 403", re.I)
+
+
+def _final_error(lines) -> str:
+    """The line an attempt actually died on, or "" if it named none.
+
+    Reading every line instead is how a download that failed for good ends
+    up being tried three times: yt-dlp retries fragments on its own and says
+    so in warnings, so "Read timed out" can sit ten lines above a final
+    "Video unavailable". Only the last ERROR describes the ending.
+
+    Takes the lines rather than fetching them, because one caller already
+    holds jobs_lock and it is not a reentrant lock.
+    """
+    for line in reversed(lines):
+        if "ERROR" in line:
+            return line
+    return ""
+
 
 def _clip_duration_seconds(data: dict):
     """Length of the requested clip in seconds, or None if not a bounded clip."""
@@ -1442,126 +1724,180 @@ def run_job(job_id: str, data: dict, output_dir: str):
             jobs[job_id]["started"] = True
             if is_clip:
                 jobs[job_id]["code"] = "clip"
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, encoding="utf-8", errors="replace", bufsize=1,
-                                env=_clean_env(),
-                                # POSIX: own process group, else kill_process_tree's
-                                # killpg would hit Aevum's group and take the app down
-                                start_new_session=sys.platform != "win32",
-                                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-        with jobs_lock:
-            jobs[job_id]["proc"] = proc
-            # Stop pressed in the gap between leaving the queue and getting a
-            # process: there was nothing to kill then, so kill it now.
-            already_cancelled = jobs[job_id].get("cancelled", False)
-        if already_cancelled:
-            kill_process_tree(proc.pid)
         progress, code, item = 0, ("clip" if is_clip else "download"), ""
         want_subs = bool(data.get("subs")) and data.get("mode", "video") == "video"
-        subs_embedded = False
         mode = data.get("mode", "video")
         started_at = time.time()
-        ff_last_bytes, ff_last_t = None, 0.0
-        for line in proc.stdout:
-            line = line.rstrip()
-            if not line:
-                continue
-            if "Downloading item" in line:
-                # yt-dlp: "[download] Downloading item 3 of 28"
-                try:
-                    seg = line.split("Downloading item", 1)[1].split()
-                    item = f"{seg[0]}/{seg[2]}"
-                except IndexError:
-                    pass
-            if "[download]" in line and "%" in line:
-                try:
-                    pct = float(line.split("%")[0].split()[-1])
-                    progress = min(int(pct), 99)
-                    code = "download"
-                except (ValueError, IndexError):
-                    pass
-                ms = _DL_SPEED_RE.search(line)
-                if ms:
-                    val = float(ms.group(1)) * {"K": 1024, "M": 1024**2, "G": 1024**3}[ms.group(2)]
-                    with jobs_lock:
-                        jobs[job_id]["speed"] = f"{val / 1e6:.1f}"
-                me = _DL_ETA_RE.search(line)
-                if me:
-                    with jobs_lock:
-                        jobs[job_id]["eta"] = me.group(1)
-                mt = _DL_TOTAL_RE.search(line)
-                if mt:
-                    tot = float(mt.group(1)) * {"K": 1024, "M": 1024**2, "G": 1024**3}[mt.group(2)]
-                    with jobs_lock:
-                        jobs[job_id]["total"] = (f"{tot / 1e9:.2f} GB" if tot >= 1e9
-                                                 else f"{tot / 1e6:.1f} MB")
-            if "Destination:" in line or "has already been downloaded" in line:
-                # No preview card was probed for this link (deep link, or
-                # Enter before the debounce fired), so take the name yt-dlp
-                # chose. "...f137.mp4" is one half of a split stream — the
-                # format suffix is not part of the title.
-                raw = (line.split("Destination:", 1)[1] if "Destination:" in line
-                       else line.split("] ", 1)[-1].rsplit(" has already", 1)[0])
-                stem = re.sub(r"\.f\d+$", "", Path(raw.strip()).stem)
-                # Our own name template ends in " [<id>]" — drop it so this
-                # reads like the title the preview card would have supplied
-                stem = re.sub(r"\s*\[[A-Za-z0-9_-]{6,}\]$", "", stem).strip()
-                if stem:
-                    with jobs_lock:
-                        if not jobs[job_id].get("title"):
-                            jobs[job_id]["title"] = stem[:200]
-            if "[EmbedSubtitle]" in line and "Embedding" in line:
-                # Positive proof a subtitle track went into the file; the
-                # warning below only fires when this never happened.
-                subs_embedded = True
-            if any(x in line for x in ["[Merger]", "[VideoConvertor]", "[ExtractAudio]",
-                                          "[EmbedSubtitle]", "[Metadata]", "[FixupM"]):
-                progress, code = 94, "process"
-            elif "time=" in line and code != "process":
-                # Section/clip downloads can run through ffmpeg, which reports
-                # elapsed "time=HH:MM:SS" instead of a percentage. Convert it
-                # against the clip length so the bar moves instead of freezing.
-                m = _FFMPEG_TIME_RE.search(line)
-                if m:
-                    elapsed = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                    if clip_dur and clip_dur > 0:
-                        progress = min(int(elapsed / clip_dur * 100), 99)
-                    else:
-                        # Unknown length: at least prove it's working (creep up)
-                        progress = min(progress + 1, 95)
-                    code = "download"
-                # Rate from the growth of size= between progress lines.
-                # A ~3s window smooths ffmpeg's bursty writes, and a zero
-                # rate never overwrites the last real one (brief stalls
-                # would otherwise make the number flicker 0.0/1.8/0.0).
-                msz = _FF_SIZE_RE.search(line)
-                if msz:
-                    cur = int(msz.group(1)) * (1024 if msz.group(2) == "KiB" else 1000)
-                    now = time.monotonic()
-                    if ff_last_bytes is None or cur < ff_last_bytes:
-                        ff_last_bytes, ff_last_t = cur, now
-                    elif now - ff_last_t >= 3.0:
-                        rate = (cur - ff_last_bytes) / (now - ff_last_t) / 1e6
-                        if rate >= 0.05:
-                            with jobs_lock:
-                                jobs[job_id]["speed"] = f"{rate:.1f}"
-                        ff_last_bytes, ff_last_t = cur, now
+        # Three tries, because YouTube's refusals are per-URL and a fresh
+        # extraction usually gets a URL it will honour (see _RETRYABLE_RE).
+        emitted = 0          # lines this attempt has printed, trim or no trim
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            subs_embedded = False
+            ff_last_bytes, ff_last_t = None, 0.0
+            # Both of these describe one attempt, not the job. A first
+            # attempt that reached the merge leaves code at "process", and
+            # the ffmpeg progress branch below refuses to run while it says
+            # that — so a retried clip would sit at 0% saying "processing"
+            # for its whole second attempt. item is the playlist counter,
+            # stale in the same way until a new one is printed.
+            code, item = ("clip" if is_clip else "download"), ""
+            # How much of the buffer belongs to this attempt. Counting
+            # rather than remembering an index: the buffer is trimmed from
+            # the front on long jobs, and an index clamped at zero quietly
+            # widens to the whole history — which is what it exists to avoid.
+            # Reading the previous attempt's error would let a 403 followed
+            # by "Private video" spend a third attempt on a video that is
+            # never coming.
+            emitted = 0
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                    env=_clean_env(),
+                                    # POSIX: own process group, else kill_process_tree's
+                                    # killpg would hit Aevum's group and take the app down
+                                    start_new_session=sys.platform != "win32",
+                                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+            with jobs_lock:
+                jobs[job_id]["proc"] = proc
+                # Stop pressed in the gap between leaving the queue and getting a
+                # process: there was nothing to kill then, so kill it now.
+                already_cancelled = jobs[job_id].get("cancelled", False)
+            if already_cancelled:
+                kill_process_tree(proc.pid)
+            for line in proc.stdout:
+                line = line.rstrip()
+                if not line:
+                    continue
+                if "Downloading item" in line:
+                    # yt-dlp: "[download] Downloading item 3 of 28"
+                    try:
+                        seg = line.split("Downloading item", 1)[1].split()
+                        item = f"{seg[0]}/{seg[2]}"
+                    except IndexError:
+                        pass
+                if "[download]" in line and "%" in line:
+                    try:
+                        pct = float(line.split("%")[0].split()[-1])
+                        progress = min(int(pct), 99)
+                        code = "download"
+                    except (ValueError, IndexError):
+                        pass
+                    ms = _DL_SPEED_RE.search(line)
+                    if ms:
+                        val = float(ms.group(1)) * {"K": 1024, "M": 1024**2, "G": 1024**3}[ms.group(2)]
+                        with jobs_lock:
+                            jobs[job_id]["speed"] = f"{val / 1e6:.1f}"
+                    me = _DL_ETA_RE.search(line)
+                    if me:
+                        with jobs_lock:
+                            jobs[job_id]["eta"] = me.group(1)
+                    mt = _DL_TOTAL_RE.search(line)
+                    if mt:
+                        tot = float(mt.group(1)) * {"K": 1024, "M": 1024**2, "G": 1024**3}[mt.group(2)]
+                        with jobs_lock:
+                            jobs[job_id]["total"] = (f"{tot / 1e9:.2f} GB" if tot >= 1e9
+                                                     else f"{tot / 1e6:.1f} MB")
+                if "Destination:" in line or "has already been downloaded" in line:
+                    # No preview card was probed for this link (deep link, or
+                    # Enter before the debounce fired), so take the name yt-dlp
+                    # chose. "...f137.mp4" is one half of a split stream — the
+                    # format suffix is not part of the title.
+                    raw = (line.split("Destination:", 1)[1] if "Destination:" in line
+                           else line.split("] ", 1)[-1].rsplit(" has already", 1)[0])
+                    stem = re.sub(r"\.f\d+$", "", Path(raw.strip()).stem)
+                    # Our own name template ends in " [<id>]" — drop it so this
+                    # reads like the title the preview card would have supplied
+                    stem = re.sub(r"\s*\[[A-Za-z0-9_-]{6,}\]$", "", stem).strip()
+                    if stem:
+                        with jobs_lock:
+                            if not jobs[job_id].get("title"):
+                                jobs[job_id]["title"] = stem[:200]
+                if "[EmbedSubtitle]" in line and "Embedding" in line:
+                    # Positive proof a subtitle track went into the file; the
+                    # warning below only fires when this never happened.
+                    subs_embedded = True
+                if any(x in line for x in ["[Merger]", "[VideoConvertor]", "[ExtractAudio]",
+                                              "[EmbedSubtitle]", "[Metadata]", "[FixupM"]):
+                    progress, code = 94, "process"
+                elif "time=" in line and code != "process":
+                    # Section/clip downloads can run through ffmpeg, which reports
+                    # elapsed "time=HH:MM:SS" instead of a percentage. Convert it
+                    # against the clip length so the bar moves instead of freezing.
+                    m = _FFMPEG_TIME_RE.search(line)
+                    if m:
+                        elapsed = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                        if clip_dur and clip_dur > 0:
+                            progress = min(int(elapsed / clip_dur * 100), 99)
+                        else:
+                            # Unknown length: at least prove it's working (creep up)
+                            progress = min(progress + 1, 95)
+                        code = "download"
+                    # Rate from the growth of size= between progress lines.
+                    # A ~3s window smooths ffmpeg's bursty writes, and a zero
+                    # rate never overwrites the last real one (brief stalls
+                    # would otherwise make the number flicker 0.0/1.8/0.0).
+                    msz = _FF_SIZE_RE.search(line)
+                    if msz:
+                        cur = int(msz.group(1)) * (1024 if msz.group(2) == "KiB" else 1000)
+                        now = time.monotonic()
+                        if ff_last_bytes is None or cur < ff_last_bytes:
+                            ff_last_bytes, ff_last_t = cur, now
+                        elif now - ff_last_t >= 3.0:
+                            rate = (cur - ff_last_bytes) / (now - ff_last_t) / 1e6
+                            if rate >= 0.05:
+                                with jobs_lock:
+                                    jobs[job_id]["speed"] = f"{rate:.1f}"
+                            ff_last_bytes, ff_last_t = cur, now
+                with jobs_lock:
+                    lines = jobs[job_id]["lines"]
+                    lines.append(line)
+                    emitted += 1
+                    # A big playlist emits tens of thousands of lines; the page
+                    # never shows them and the error scan only needs the tail.
+                    if len(lines) > 500:
+                        cut = len(lines) - 400
+                        del lines[:cut]
+                        jobs[job_id]["read_idx"] = max(0, jobs[job_id]["read_idx"] - cut)
+                    jobs[job_id]["progress"] = progress
+                    jobs[job_id]["code"] = code
+                    jobs[job_id]["item"] = item
+            proc.wait()
+            with jobs_lock:
+                cancelled = jobs[job_id].get("cancelled", False)
+            success = proc.returncode == 0 and not cancelled
+            if success or cancelled or attempt == _MAX_ATTEMPTS:
+                break
+            # A playlist runs with --ignore-errors and still exits non-zero
+            # if any one item failed, so a fifty-video list that lost one
+            # entry to a 403 looks exactly like a failure worth repeating.
+            # Repeating it re-extracts all fifty, downloads nothing new, and
+            # asks the site for more of what it just refused.
+            if data.get("playlist"):
+                break
             with jobs_lock:
                 lines = jobs[job_id]["lines"]
-                lines.append(line)
-                # A big playlist emits tens of thousands of lines; the page
-                # never shows them and the error scan only needs the tail.
-                if len(lines) > 500:
-                    cut = len(lines) - 400
-                    del lines[:cut]
-                    jobs[job_id]["read_idx"] = max(0, jobs[job_id]["read_idx"] - cut)
-                jobs[job_id]["progress"] = progress
-                jobs[job_id]["code"] = code
-                jobs[job_id]["item"] = item
-        proc.wait()
-        with jobs_lock:
-            cancelled = jobs[job_id].get("cancelled", False)
-        success = proc.returncode == 0 and not cancelled
+                tail = lines[-emitted:] if emitted else []
+            if not _RETRYABLE_RE.search(_final_error(tail)):
+                break
+            with jobs_lock:
+                jobs[job_id]["lines"].append(
+                    "[aevum] attempt %d failed, trying again" % attempt)
+                jobs[job_id].update({"progress": 0, "speed": "", "eta": "",
+                                     "code": "clip" if is_clip else "download"})
+            progress = 0
+            # A breath between attempts, but Stop must not have to sit
+            # through it: the button is the one thing that should always
+            # feel immediate.
+            waited = 0.0
+            while waited < _RETRY_PAUSE:
+                time.sleep(0.1)
+                waited += 0.1
+                with jobs_lock:
+                    if jobs[job_id].get("cancelled", False):
+                        break
+            with jobs_lock:
+                if jobs[job_id].get("cancelled", False):
+                    cancelled, success = True, False
+                    break
         if success and mode == "video" and not data.get("playlist"):
             # The template wrote the height, which is the long side of a
             # vertical video and blank where the site reported none. Now
@@ -1596,6 +1932,20 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 if any("Requested format is not available" in l
                        for l in jobs[job_id]["lines"]):
                     jobs[job_id]["formaterr"] = True
+                # Three attempts and the site still would not hand the file
+                # over. One 403 is weather; three in a row is the sign that
+                # the site has moved and the copy of yt-dlp in this build
+                # does not know the new way yet. Raw "HTTP Error 403" tells
+                # the user nothing they can act on, so say that instead.
+                # Read from this attempt's ending only, and for a refusal
+                # only: the message names a number of tries and blames the
+                # site, and both halves have to be true when it appears. A
+                # playlist is excluded for the same reason it is not
+                # retried — one refused item out of fifty is not the site
+                # turning us away, and the other forty-nine arrived.
+                if not data.get("playlist") and _REFUSED_RE.search(_final_error(
+                        jobs[job_id]["lines"][-emitted:] if emitted else [])):
+                    jobs[job_id]["staleerr"] = True
         with jobs_lock:
             title = jobs[job_id].get("title", "")
         _record_history(job_id, data, output_dir, success)
@@ -1653,8 +2003,19 @@ def _kill_current_probe():
 
 
 def _run_probe_json(args, timeout=25):
-    """Run yt-dlp and parse its single-line JSON output (None on failure)."""
+    """Run yt-dlp and parse its single-line JSON output (None on failure).
+
+    Not while the binary is being replaced: on Windows that launch fails with
+    an access error and the card says the link could not be read, which is
+    both wrong and unhelpful. A preview is advisory — skipping one for the
+    few seconds a swap takes costs nothing, and the next keystroke asks
+    again. Deliberately not applied to _ytdlp_version: the updater calls it
+    to check its own work, so refusing there would block the update on the
+    gate the update itself is holding.
+    """
     global _probe_proc
+    if _maintenance_busy.is_set():
+        return None
     _kill_current_probe()
     try:
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -1801,6 +2162,11 @@ def _queue_worker():
             while not job_queue:
                 queue_cv.wait()
             job_id = job_queue.pop(0)
+        # A package update is replacing the binary this job is about to run.
+        # It takes seconds and the row simply stays where it is, which is a
+        # better answer than starting against an exe that is being renamed.
+        while _maintenance_busy.is_set():
+            time.sleep(0.2)
         with jobs_lock:
             job = jobs.get(job_id)
             # Cancelled while it was still waiting: cancel_route already
@@ -1859,7 +2225,8 @@ def jobs_route():
                    "item": j.get("item", ""), "error_line": j.get("error_line", ""),
                    "subswarn": j.get("subswarn", False),
                    "cookieerr": j.get("cookieerr", False),
-                   "formaterr": j.get("formaterr", False)}
+                   "formaterr": j.get("formaterr", False),
+                   "staleerr": j.get("staleerr", False)}
                   for jid, j in jobs.items() if not j["done"]]
         # What the main bar keeps showing once the queue empties, with its
         # exact error / "subtitles skipped" wording. Only jobs that actually
@@ -1874,7 +2241,8 @@ def jobs_route():
                     "error_line": f.get("error_line", ""),
                     "subswarn": f.get("subswarn", False),
                     "cookieerr": f.get("cookieerr", False),
-                    "formaterr": f.get("formaterr", False)}
+                    "formaterr": f.get("formaterr", False),
+                    "staleerr": f.get("staleerr", False)}
     with history_lock:
         past = list(download_history[:20])
     return jsonify({"active": active, "last": last, "past": past})
@@ -1895,6 +2263,7 @@ def status_route(job_id):
                     "speed": job.get("speed", ""), "subswarn": job.get("subswarn", False),
                     "cookieerr": job.get("cookieerr", False),
                     "formaterr": job.get("formaterr", False),
+                    "staleerr": job.get("staleerr", False),
                     "output_dir": job["output_dir"]})
 
 
@@ -1967,11 +2336,7 @@ _cfg_lock = threading.Lock()
 
 
 def _config_file() -> str:
-    if _IS_WINDOWS:
-        base = os.environ.get("APPDATA") or os.path.expanduser("~")
-        return os.path.join(base, "Aevum", "config.json")
-    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return os.path.join(cfg, "aevum", "config.json")
+    return os.path.join(_user_data_dir(), "config.json")
 
 
 def _load_config() -> dict:
@@ -2297,9 +2662,15 @@ def _set_update(**kw):
 
 def _do_update(rel: dict, kind: str, name: str, ver: str):
     """Download, verify, then hand over. Never overwrites a running binary."""
-    work = _update_dir(kind)
-    tmp = os.path.join(work, name + ".part")
+    work = tmp = ""
     try:
+        # Inside the try, both of them: the finally below is what releases
+        # the maintenance gate, and a line above it that raises would leave
+        # the gate shut with nobody to open it — every queued download stuck
+        # in "queued" and both updaters answering 409 until the app restarts.
+        # A hang with no error in it is the worst shape this can fail in.
+        work = _update_dir(kind)
+        tmp = os.path.join(work, name + ".part")
         # Ask the folder whether it will take a file before spending ninety
         # megabytes finding out. A copy installed somewhere read-only fails
         # here in a sentence the user can act on, rather than at the last
@@ -2422,10 +2793,23 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
         except OSError:
             pass
         _set_update(stage="error", msg=str(e)[:120])
+    finally:
+        # "launched" means the installer is running and this process is on
+        # its way out. Opening the gate then would let a download start into
+        # a program that is closing, which is the thing the gate is for.
+        # Every other ending — finished, failed, nothing to do — releases it.
+        with _update_lock:
+            handing_over = _update_state["stage"] == "launched"
+        if not handing_over:
+            _maintenance_busy.clear()
 
 
 @app.route("/update/check")
 def update_check():
+    # Same lock as /packages/check, and the same promise behind it. This one
+    # predates the packages line, and was reachable the same way.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"ok": False, "current": APP_VERSION}), 403
     kind = install_kind()
     try:
         rel = _latest_release()
@@ -2458,28 +2842,44 @@ def update_apply():
     # a preflight.
     if request.headers.get("X-Aevum") != "1":
         return jsonify({"stage": "error", "msg": "bad request"}), 403
-    # The setup path starts the installer and exits the app a second and a
-    # half later. Anything still downloading would be orphaned mid-file with
-    # no window left to say so, and the queue behind it lost.
-    with jobs_lock:
-        if any(not j["done"] for j in jobs.values()):
-            return jsonify({"stage": "error", "busy": True,
-                            "msg": "a download is running"}), 409
     kind = install_kind()
     name = _UPDATE_ASSET.get(kind, "")
     if not name:
         return jsonify({"stage": "error", "msg": "no package for this build"}), 400
+    # Close the gate before anything else, and before looking for downloads
+    # rather than after: the setup path starts the installer and exits this
+    # process a second and a half later, so a job that slips in between the
+    # look and the gate is a download with no program left to finish it.
+    # With the gate shut first, a job queued in that window is still in the
+    # queue when we look, and we refuse. Failing to claim it means the other
+    # updater is working, and nothing here may disturb its gate.
+    if not _claim_maintenance():
+        return jsonify({"stage": "error", "busy": True,
+                        "msg": "an update is running"}), 409
     with _update_lock:
         if _update_state["stage"] in ("download", "launched"):
+            # Unreachable while the flag is honest — that state means
+            # _do_update holds it — but a claimed gate must never be left
+            # behind on a path that returns.
+            _maintenance_busy.clear()
             return jsonify(dict(_update_state))
         # Claim the slot inside the same lock that just tested it. Asking
         # GitHub for the release takes long enough that a second click, or a
         # second tab, walks through the gap and starts its own download into
         # the same part file.
         _update_state.update(stage="download", pct=0, msg="", path="")
-    def _fail(msg, code):
+
+    def _fail(msg, code, busy=False):
+        _maintenance_busy.clear()
         _set_update(stage="error", msg=msg)
-        return jsonify({"stage": "error", "msg": msg}), code
+        body = {"stage": "error", "msg": msg}
+        if busy:
+            body["busy"] = True
+        return jsonify(body), code
+
+    with jobs_lock:
+        if any(not j["done"] for j in jobs.values()):
+            return _fail("a download is running", 409, busy=True)
     try:
         rel = _latest_release()
     except Exception as e:
@@ -2487,7 +2887,11 @@ def update_apply():
     latest = (rel.get("tag_name") or "").lstrip("vV")
     if _version_tuple(latest) <= _version_tuple(APP_VERSION):
         return _fail("already up to date", 400)
-    threading.Thread(target=_do_update, args=(rel, kind, name, latest), daemon=True).start()
+    try:
+        threading.Thread(target=_do_update, args=(rel, kind, name, latest),
+                         daemon=True).start()
+    except RuntimeError as e:
+        return _fail(str(e)[:120], 500)
     return jsonify(dict(_update_state))
 
 
@@ -2497,8 +2901,367 @@ def update_status():
         return jsonify(dict(_update_state))
 
 
+# ── Keeping yt-dlp current ───────────────────────────────────────────────────
+# Everything else in this build can sit still. yt-dlp cannot: it is the piece
+# that talks to the sites, and the sites keep changing the locks. Shipping a
+# whole 120 MB release every time YouTube turns a key is no way to live, so
+# the newer copy goes into the user's own folder, where _find_binary looks
+# first and no installer is needed.
+#
+# There is no download-and-verify code below, because yt-dlp already has some:
+# it fetches the build, checks it against the hash the release publishes and
+# replaces itself. All that is missing is somewhere writable to do it, which
+# is the copy this makes.
+#
+# Nightly is in the picture at all because stable releases have come 25 to 84
+# days apart, while the fix for whatever a site changed this week lands in the
+# tree the day after. On 2026-08-16 the newest stable was six weeks old and
+# could not download from YouTube at all; the nightly of that morning could.
+#
+# Both channels are watched, and stable is preferred whenever it is actually
+# ahead. yt-dlp tags a stable release every few weeks and builds a nightly
+# from the same tree every day, so the newest of the two is not always the
+# same kind of thing:
+#
+#   on stable, sites break, nightly has the fix   -> nightly, because it works
+#   later, stable catches up and passes it        -> stable, because it is the
+#                                                    build that has been sat on
+#   sites break again, nightly is ahead once more -> nightly again
+#
+# Which is to say: take whichever is genuinely newer, and let a tie go to
+# stable. Nobody is left on a nightly longer than they have to be, and nobody
+# is left on a stable that cannot download.
+PKG_REPOS = (("stable", "yt-dlp/yt-dlp"),
+             ("nightly", "yt-dlp/yt-dlp-nightly-builds"))
+
+_pkg_lock = threading.Lock()
+_pkg_state = {"stage": "idle", "msg": "", "version": ""}
+_pkg_cache = {"at": 0.0, "tags": {}}
+# Held while either updater is working, and the queue waits on it. Both need
+# it for the same reason: a download started during the work is a download
+# that gets hurt. Swapping yt-dlp renames the exe out from under a running
+# job on Windows; installing a new Aevum starts the installer and exits this
+# process a moment later, orphaning whatever was mid-file. A few seconds in
+# "queued" beats either.
+#
+# One flag for both, because the two must not be able to run at once either.
+_maintenance_busy = threading.Event()
+# Taken only to test-and-set the flag above. Two updaters sharing one flag
+# does not by itself keep them apart: press both buttons and each claims its
+# own state, both raise the same flag, and the first to finish lowers it
+# while the other is still working — reopening the queue mid-swap, which is
+# the one thing the flag is for. Worse, an installer that exits this process
+# can land in the middle of a yt-dlp replacement. Claiming the flag under a
+# lock makes "either updater is working" mean what it says.
+_maintenance_lock = threading.Lock()
+
+
+def _claim_maintenance() -> bool:
+    """Raise the flag if nobody else holds it. False means someone does."""
+    with _maintenance_lock:
+        if _maintenance_busy.is_set():
+            return False
+        _maintenance_busy.set()
+        return True
+
+
+def _user_ytdlp() -> str:
+    """Where an updated yt-dlp lives, which is never inside the package.
+
+    Resolved, for the reason _find_binary resolves: a redirected AppData or
+    a symlinked home would otherwise hand yt-dlp's bootloader two different
+    names for itself and it would refuse to start.
+    """
+    return os.path.realpath(os.path.join(_user_data_dir(), "bin",
+                            "yt-dlp" + (".exe" if _IS_WINDOWS else "")))
+
+
+_pkg_ver_cache = {"exe": "", "ver": ""}
+
+
+def _ytdlp_version(exe: str = "") -> str:
+    """Version of a yt-dlp, defaulting to the one in use.
+
+    Naming one matters on the rollback paths: they need to know whether the
+    binary they just wrote will run, and by then it may not be the one the
+    app is pointing at.
+
+    Answering the default from memory, because the page asks on every load
+    and the answer costs a 17 MB PyInstaller launch — seconds on a cold
+    Windows start with a virus scanner reading the file, in front of the
+    settings panel each time. It only changes when an update or a revert
+    changes it, and both clear this.
+    """
+    if not exe and _pkg_ver_cache["exe"] == YTDLP and _pkg_ver_cache["ver"]:
+        return _pkg_ver_cache["ver"]
+    try:
+        out = subprocess.run(
+            [exe or YTDLP, "--version"], capture_output=True, text=True, timeout=20,
+            env=_clean_env(),
+            creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0)
+        ver = (out.stdout or "").strip().splitlines()[0].strip()
+        if not exe and ver:
+            _pkg_ver_cache.update(exe=YTDLP, ver=ver)
+        return ver
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return ""
+
+
+def _latest_pkg_tags() -> dict:
+    """Newest tag on each channel. Cached like the app's own check."""
+    now = time.time()
+    if _pkg_cache["tags"] and now - _pkg_cache["at"] < 900:
+        return _pkg_cache["tags"]
+    tags = {}
+    for channel, repo in PKG_REPOS:
+        # Ten seconds each, not the default thirty. This runs with the
+        # maintenance gate already shut, so every second spent waiting on
+        # GitHub is a second the download queue is parked — and if it ends in
+        # a timeout the queue was parked for work that never started.
+        with _fetch(f"https://api.github.com/repos/{repo}/releases/latest",
+                    timeout=10) as r:
+            tags[channel] = (json.loads(
+                r.read().decode("utf-8", "replace")).get("tag_name") or "")
+    _pkg_cache.update(at=now, tags=tags)
+    return tags
+
+
+def _pick_channel(current: str) -> tuple:
+    """Which channel to move to, if any: (channel, tag) or ("", "").
+
+    Stable is checked first, so a stable that has caught up wins even when a
+    nightly of the same day exists. What is running is the only baseline that
+    matters — being on a nightly does not mean staying on nightlies.
+    """
+    tags = _latest_pkg_tags()
+    cur = _version_tuple(current)
+    for channel, _ in PKG_REPOS:
+        if _version_tuple(tags.get(channel, "")) > cur:
+            return channel, tags[channel]
+    return "", ""
+
+
+def _set_pkg(**kw):
+    with _pkg_lock:
+        _pkg_state.update(kw)
+
+
+def _do_pkg_update(channel: str):
+    """Copy yt-dlp somewhere writable, then let it update itself."""
+    global YTDLP
+    dest = _user_ytdlp()
+    previous = YTDLP
+    before = _ytdlp_version()
+    created = False
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if not os.path.isfile(dest):
+            # Copy to one side and move it into place, rather than writing
+            # 17 MB straight to the name the app will trust from now on. A
+            # copy cut short — no disk, no power — would otherwise leave half
+            # a binary sitting where _find_binary looks first, and every
+            # download after that would fail with nothing to explain it.
+            staging = dest + ".part"
+            shutil.copy2(BUNDLED_YTDLP, staging)
+            if not _IS_WINDOWS:
+                os.chmod(staging, 0o755)
+            os.replace(staging, dest)
+            created = True
+        out = subprocess.run(
+            [dest, "--update-to", channel], capture_output=True, text=True,
+            timeout=300, env=_clean_env(),
+            creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0)
+        YTDLP = dest
+        # The path did not change, the file behind it did. Without this the
+        # remembered version is returned and the update decides it installed
+        # nothing.
+        _pkg_ver_cache["ver"] = ""
+        ver = _ytdlp_version()
+        if out.returncode != 0 or not ver:
+            # Either the update refused or what it left behind will not run.
+            # A yt-dlp that cannot answer --version cannot download either,
+            # so put the packaged one back rather than leave the app holding
+            # a binary it cannot use.
+            #
+            # The copy this call made is cleared away too. It is byte for byte
+            # the packaged one, so keeping it breaks nothing — but from the
+            # next launch on it is what _find_binary finds, and Settings would
+            # offer to undo an update that never happened.
+            YTDLP = previous
+            if created or not ver:
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+                YTDLP = BUNDLED_YTDLP
+            msg = (out.stderr or out.stdout or "").strip().splitlines()
+            _set_pkg(stage="error", msg=(msg[-1][:120] if msg else "update failed"))
+            return
+        _pkg_cache.update(at=0.0, tags={})
+        if ver == before:
+            # Pressing the button on an already-current copy succeeds without
+            # installing anything, and "updated to X" would be a plain
+            # untruth. Idle lets the line say what it says the rest of the
+            # time, which by then is that this is the newest one. A copy made
+            # for an update that turned out to be unnecessary goes away with
+            # it, rather than sitting there offering to be undone.
+            if created:
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+                YTDLP = previous
+            _set_pkg(stage="idle", msg="", version=ver)
+            return
+        _set_pkg(stage="done", msg="", version=ver)
+    except Exception as e:
+        # The same clearing-up as the failure branch, and for a sharper
+        # reason: the likeliest way in here is the 300-second timeout, which
+        # can land while yt-dlp is part way through replacing itself. Putting
+        # the session back on the old binary is not enough — whatever is
+        # lying at dest is what the next launch would pick up. It stays only
+        # if it was already there before this call and still runs.
+        YTDLP = previous
+        if created or not _ytdlp_version(dest):
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            YTDLP = BUNDLED_YTDLP
+        _set_pkg(stage="error", msg=str(e)[:120])
+    finally:
+        _maintenance_busy.clear()
+
+
+@app.route("/packages/check")
+def packages_check():
+    # A GET with no header of its own is reachable from any page the browser
+    # has open — an <img> tag is enough — and this one spawns a process and
+    # then talks to GitHub. README and SECURITY.md both promise that never
+    # happens unless Settings is opened, so the promise needs a lock on it.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"ok": False, "msg": "bad request"}), 403
+    cur = _ytdlp_version()
+    custom = os.path.isfile(_user_ytdlp())
+    try:
+        channel, tag = _pick_channel(cur)
+    except Exception:
+        return jsonify({"ok": False, "current": cur, "custom": custom})
+    return jsonify({"ok": True, "current": cur, "latest": tag,
+                    "channel": channel, "newer": bool(channel),
+                    "custom": custom})
+
+
+@app.route("/packages/apply", methods=["POST"])
+def packages_apply():
+    # Same reasoning as /update/apply: without a header of our own this is a
+    # CORS simple request and any open page could start it.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"stage": "error", "msg": "bad request"}), 403
+    # Claim the slot, close the gate, and only then look at anything else.
+    # Both orderings that read more naturally are wrong: checking for
+    # downloads first leaves a gap for one to start in, and asking GitHub
+    # first spends a subprocess and two HTTPS calls with the gate still open.
+    # Windows will not let a running binary be overwritten, and on Linux
+    # swapping it mid-download is no better an idea. Everything that can fail
+    # from here on opens the gate again.
+    if not _claim_maintenance():
+        # The other updater has it. Refuse without touching its gate.
+        return jsonify({"stage": "error", "busy": True,
+                        "msg": "an update is running"}), 409
+    with _pkg_lock:
+        if _pkg_state["stage"] == "working":
+            _maintenance_busy.clear()
+            return jsonify(dict(_pkg_state))
+        _pkg_state.update(stage="working", msg="", version="")
+
+    def _stand_down(stage, msg, version=""):
+        _maintenance_busy.clear()
+        _set_pkg(stage=stage, msg=msg, version=version)
+
+    with jobs_lock:
+        if any(not j["done"] for j in jobs.values()):
+            _stand_down("error", "a download is running")
+            return jsonify({"stage": "error", "busy": True,
+                            "msg": "a download is running"}), 409
+    try:
+        channel, _tag = _pick_channel(_ytdlp_version())
+    except Exception as e:
+        _stand_down("error", str(e)[:120])
+        return jsonify({"stage": "error", "msg": str(e)[:120]}), 502
+    if not channel:
+        # Nothing newer on either channel. The page reads this the same way
+        # it reads a finished update: a tick, and no claim of having done
+        # anything.
+        _stand_down("idle", "", _ytdlp_version())
+        with _pkg_lock:
+            return jsonify(dict(_pkg_state))
+    try:
+        threading.Thread(target=_do_pkg_update, args=(channel,), daemon=True).start()
+    except RuntimeError as e:
+        # A flag left raised with no thread to lower it would park the queue
+        # on a swap that is never coming: a hang rather than an error.
+        _stand_down("error", str(e)[:120])
+        return jsonify({"stage": "error", "msg": "could not start"}), 500
+    with _pkg_lock:
+        return jsonify(dict(_pkg_state))
+
+
+@app.route("/packages/status")
+def packages_status():
+    with _pkg_lock:
+        return jsonify(dict(_pkg_state))
+
+
+@app.route("/packages/revert", methods=["POST"])
+def packages_revert():
+    """Back to the copy the app shipped with.
+
+    The whole point of the nightly channel is getting fixes early, and early
+    is also where a bad build lives. Deleting one file is the way back, and
+    it needs to be one click rather than a paragraph of instructions.
+    """
+    global YTDLP
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"stage": "error", "msg": "bad request"}), 403
+    with jobs_lock:
+        if any(not j["done"] for j in jobs.values()):
+            return jsonify({"stage": "error", "busy": True,
+                            "msg": "a download is running"}), 409
+    # Deleting the file an update is in the middle of writing leaves the app
+    # pointed at a name with nothing behind it, and every download after that
+    # fails with "yt-dlp not found". Reading the state was not enough: an
+    # update claims the gate a moment before it says "working", and in that
+    # gap this route saw an idle state and deleted the file out from under
+    # it. This takes the same gate the updaters take, so the three of them
+    # queue behind one another properly.
+    if not _claim_maintenance():
+        return jsonify({"stage": "error", "busy": True,
+                        "msg": "an update is running"}), 409
+    try:
+        if os.path.isfile(_user_ytdlp()):
+            os.remove(_user_ytdlp())
+    except OSError as e:
+        _maintenance_busy.clear()
+        return jsonify({"stage": "error", "msg": str(e)[:120]}), 500
+    YTDLP = BUNDLED_YTDLP
+    _pkg_ver_cache["ver"] = ""
+    _set_pkg(stage="idle", msg="", version="")
+    _maintenance_busy.clear()
+    return jsonify({"stage": "idle", "current": _ytdlp_version()})
+
+
 @app.route("/settings")
 def settings_get():
+    # Guarded like the check routes, and for a reason this route only
+    # acquired in 1.2.6: reading the yt-dlp version means running it. Before
+    # that this was a config read and an unguarded GET was merely untidy;
+    # now an <img> tag on any page the browser has open could spawn a
+    # process on every load. Origin is absent on subresource GETs, so the
+    # same-origin guard alone does not stop it — a header only our own page
+    # sends does.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
     cfg = _load_config()
     return jsonify({
         "startup": get_startup_enabled(),
@@ -2508,11 +3271,23 @@ def settings_get():
         "canStartup": _IS_WINDOWS,
         "lang": cfg.get("lang", ""),
         "theme": cfg.get("theme", ""),
+        # What is installed, which is answerable without asking anyone. The
+        # panel fills both version lines from this the moment it opens, and
+        # they stay filled whether or not a scan is ever run — the network is
+        # only needed to say whether something newer exists.
+        "version": APP_VERSION,
+        "pkgVersion": _ytdlp_version(),
     })
 
 
 @app.route("/settings", methods=["POST"])
 def settings_set():
+    # The JSON content type already forces a preflight that nothing here
+    # answers, so this was never reachable cross-origin. The header is
+    # carried anyway: one rule for every route that changes something, and
+    # no reasoning about which content types are simple.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
     data = request.json or {}
     if "menu" in data and sys.platform.startswith("linux"):
         try:
@@ -2595,8 +3370,17 @@ def quit_app(icon, item):
     os._exit(0)
 
 
-def find_free_port(start: int = 5000) -> int:
-    for p in range(start, start + 60):
+# One range, used by the two functions that have to agree about it: the one
+# that picks a port to listen on and the one that goes looking for an Aevum
+# already listening. They were 60 apart and 10 apart, so a copy that landed
+# on 5012 was invisible to the next launch and a second instance started
+# beside it. Ten is the search's number, because each miss costs a timeout
+# and a cold start should not spend twenty seconds proving nothing is there.
+PORT_BASE, PORT_SPAN = 5000, 10
+
+
+def find_free_port(start: int = PORT_BASE) -> int:
+    for p in range(start, start + PORT_SPAN):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
                 s.bind(("127.0.0.1", p))
@@ -2657,7 +3441,7 @@ def _browser_watchdog():
 def _find_running_instance():
     """URL of an already-running Aevum on the usual ports, or None."""
     import urllib.request
-    for p in range(5000, 5010):
+    for p in range(PORT_BASE, PORT_BASE + PORT_SPAN):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{p}/ping", timeout=0.4) as r:
                 if json.loads(r.read().decode()).get("app") == "aevum":

@@ -15,6 +15,12 @@ if not exist "bin\yt-dlp.exe" echo MISSING: bin\yt-dlp.exe && pause && exit /b 1
 if not exist "bin\ffmpeg.exe" echo MISSING: bin\ffmpeg.exe && pause && exit /b 1
 if not exist "bin\ffprobe.exe" echo MISSING: bin\ffprobe.exe && pause && exit /b 1
 
+REM Say which yt-dlp is going in. Nothing here can tell a nightly from a
+REM stable, and the Linux workflow fetches its own copy, so the two halves of
+REM a release can quietly come from different channels. The date is the tell:
+REM a yt-dlp more than a few weeks old is one the sites have moved past.
+for /f "delims=" %%v in ('bin\yt-dlp.exe --version') do echo BUNDLING yt-dlp %%v
+
 REM The updater compares APP_VERSION against the newest release tag, so a
 REM constant left behind would hide a real update or offer one already here.
 REM Refuse to build while the three places disagree.
@@ -37,7 +43,13 @@ move /y "dist\Aevum.exe" "Portable\Aevum.exe" >nul
 
 echo [3/3] Building installer to Setup\ ...
 if not exist "Setup" mkdir "Setup"
-ISCC.exe installer.iss || echo (Inno Setup / ISCC not found on PATH - skipped installer)
+REM Clear the old one out first. Without this a failed ISCC run leaves the
+REM PREVIOUS version's installer sitting in Setup\, and the summary at the
+REM end points at it as though it were the build that just ran — which on a
+REM release day means shipping the last version under this version's name.
+if exist "Setup\Aevum-Setup.exe" del /q "Setup\Aevum-Setup.exe"
+ISCC.exe installer.iss || (echo INSTALLER FAILED - is Inno Setup ^(ISCC.exe^) on PATH? & pause & exit /b 1)
+if not exist "Setup\Aevum-Setup.exe" (echo INSTALLER MISSING - ISCC reported success but wrote nothing & pause & exit /b 1)
 
 rmdir /s /q build >nul 2>&1
 del /q Aevum.spec >nul 2>&1
