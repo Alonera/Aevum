@@ -45,14 +45,22 @@ jobs:
           # construction, which is the point of taking it from here.
           cp fftmp/ffmpeg-*-static/ffprobe bin/ffprobe
           chmod +x bin/ffmpeg bin/ffprobe
-          # ffmpeg 8.1.x must never ship: its HTTP range requests hang
-          # forever on googlevideo, breaking clip downloads (yt-dlp #16546).
-          # 7.x and 8.0 are known good. Fail loudly if the upstream
-          # "release" build ever moves to a bad version.
+          # The URL above is a moving "latest release" pointer, so what
+          # arrives has to be checked rather than trusted. The check is a
+          # list of what is known to work, not a list of what is known to
+          # break: refusing 8.1.x alone would have waved 9.x through on the
+          # day upstream cut it, and 8.1's fault — HTTP range requests that
+          # hang forever on googlevideo, killing clip downloads (yt-dlp
+          # #16546) — is exactly the kind of thing a new major can bring
+          # back. 7.x and 8.0.x are the versions this app has been tested
+          # against. A refusal here is a build to look at, not a bug.
           ver=$(bin/ffmpeg -version | head -1 | awk '{print $3}')
           echo "bundled ffmpeg: $ver"
           case "$ver" in
-            8.1*) echo "REFUSING to bundle ffmpeg $ver (googlevideo range-request hang)"; exit 1 ;;
+            7.*|8.0|8.0.*) echo "ffmpeg $ver is a known-good version" ;;
+            *) echo "REFUSING to bundle ffmpeg $ver - only 7.x and 8.0.x are tested"
+               echo "(8.1.x hangs on googlevideo range requests; newer majors are unverified)"
+               exit 1 ;;
           esac
 
       - name: Build AppImage + tar.gz

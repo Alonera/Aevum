@@ -35,7 +35,7 @@ You only need to do this once.
 ### Is it safe? / Privacy
 
 - **Open source** — all the code is in this repository; you can read exactly what it does.
-- **Runs locally — with one exception, and here it is** — downloading is entirely local: Aevum talks only to the video sites you paste, and your files never leave your machine. There are no analytics, no accounts and no telemetry, and nothing is reported to the developer. The one thing that is not local is checking for updates, because a program cannot know it is out of date without asking. From 1.2.5, opening Settings makes a single HTTPS request to `api.github.com` for this repository's newest release; that is how the version line knows whether you are behind. From 1.2.6 it makes a second one, to the yt-dlp nightly repository, for the same reason on the Packages line. Both happen only when you open that panel — never at launch, never in the background — and the answers are reused for fifteen minutes. Nothing about you or about what you have downloaded goes with it: it is the same public read as opening the releases page in a browser. Never open Settings and Aevum never contacts GitHub at all.
+- **Runs locally — with one exception, and here it is** — downloading is entirely local: Aevum talks only to the video sites you paste, and your files never leave your machine. There are no analytics, no accounts and no telemetry, and nothing is reported to the developer. The one thing that is not local is checking for updates, because a program cannot know it is out of date without asking. From 1.2.5, opening Settings makes an HTTPS request to `api.github.com` for this repository's newest release; that is how the version line knows whether you are behind. From 1.2.6 it makes two more, for the Packages line: one for yt-dlp's newest stable and one for its newest nightly, because it offers you whichever of the two is actually ahead of what you have. Three requests, all to `api.github.com`, all only when you open that panel — never at launch, never in the background — and the answers are reused for fifteen minutes. Nothing about you or about what you have downloaded goes with it: it is the same public read as opening the releases page in a browser. Never open Settings and Aevum never contacts GitHub at all.
 - **Verify your download** — each release includes `checksums.txt` (SHA‑256). You can confirm the file you downloaded matches. A VirusTotal scan link is provided in the release notes.
 
 ## Features
@@ -50,8 +50,8 @@ You only need to do this once.
 - **Login-only content** — use your browser's cookies to download from sites where you're signed in (your own account). Firefox works. Chrome, Edge and Brave no longer hand their cookies to any other program, Chrome's own change, and nothing outside Chrome can undo it.
 - **Queue** — press Download while one is running and the next link lines up behind it. Every entry gets its own row with the size, speed and time left, and you can drop one back out of the queue.
 - **Stop button** — cancel the running download at any time.
-- **Updates itself** — Settings names the version you are running and asks GitHub for the newest one when you open the panel. That check is a network request; it is one of only two Aevum makes that are not to a site you pasted. What it fetches is checked against the SHA-256 the release publishes before anything is opened.
-- **Keeps yt-dlp current on its own** — the sites keep changing and yt-dlp keeps up, usually within days, while a release here takes weeks. The Packages line in Settings updates it in place, so a download that broke because YouTube moved something can be fixed without waiting for a new Aevum. It watches yt-dlp's stable and nightly channels and offers whichever is actually newer, preferring stable when it is ahead, so a nightly is only ever a stopgap until stable catches up. It goes into your own folder, never the installed package, and one click puts the bundled version back. This is the second of the two requests above.
+- **Updates itself** — Settings names the version you are running and asks GitHub for the newest one when you open the panel. That check is a network request; Aevum makes three of those in total, and none of them go anywhere but GitHub. What it fetches is checked against the SHA-256 the release publishes before anything is opened.
+- **Keeps yt-dlp current on its own** — the sites keep changing and yt-dlp keeps up, usually within days, while a release here takes weeks. The Packages line in Settings updates it in place, so a download that broke because YouTube moved something can be fixed without waiting for a new Aevum. It watches yt-dlp's stable and nightly channels — two of the three requests — and offers stable whenever stable is newer than the copy you have, falling back to a nightly only when stable is not. So a nightly is only ever a stopgap: the next stable that passes what you are running takes you back to it. It goes into your own folder, never the installed package, and one click puts the bundled version back. That is the rest of the three.
 - **8 languages** — English, Türkçe, Español, Deutsch, Français, Italiano, Português, Русский. Your choice is remembered.
 - **Self-contained** — yt-dlp, FFmpeg and ffprobe are bundled; nothing else to install.
 - **No ads, no tracking** — no adware, no bundled toolbars, no telemetry. Everything runs locally.
@@ -70,13 +70,14 @@ The real heavy lifting is done by two excellent open-source projects — [yt-dlp
 
 Requires Python 3.10+.
 
-```bash
+```bat
 pip install flask pystray pillow pyinstaller
-# Place yt-dlp.exe and ffmpeg.exe into a bin/ folder next to ytdl_tray.py
+REM Place yt-dlp.exe, ffmpeg.exe and ffprobe.exe into a bin\ folder next to ytdl_tray.py
 python -m PyInstaller --onefile --noconsole --name Aevum ^
   --icon app.ico --version-file version.txt ^
   --hidden-import pystray._win32 --collect-submodules pystray ^
-  --add-data "bin/yt-dlp.exe;." --add-data "bin/ffmpeg.exe;." --add-data "fonts;fonts" ytdl_tray.py
+  --add-data "bin/yt-dlp.exe;." --add-data "bin/ffmpeg.exe;." --add-data "bin/ffprobe.exe;." ^
+  --add-data "fonts;fonts" ytdl_tray.py
 ```
 
 Or just run `build.bat`.

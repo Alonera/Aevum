@@ -15,10 +15,21 @@ Aevum's interface is a page in your browser, served by a small web server that
 listens on `127.0.0.1` only — never on your network, so nothing else on it can
 reach Aevum.
 
-That server answers only the page Aevum opened. A request arriving under any
-other name, or carrying another site's origin, is refused. So a site you happen
-to have open in another tab cannot drive your copy of Aevum — it cannot start a
-download, choose where files are written, or trigger an update.
+A request arriving under any other name, or carrying another site's origin, is
+refused. So a site you happen to have open in another tab cannot drive your copy
+of Aevum: it cannot start a download, choose where files are written, update
+anything, or read a single byte of an answer, because the browser will not hand
+a cross-origin reply back to the page that asked for it.
+
+Where that stops short, precisely: a browser sends no origin at all on a plain
+subresource GET — an `<img>` tag pointing at the port, say — and such a request
+is answered rather than refused. Everything that does something, or that costs
+anything to answer, additionally requires a header only Aevum's own page sends,
+which turns the request into one the browser must ask permission for first and
+nothing here grants. What is left reachable that way is the handful of GETs that
+merely report state. They give nothing back to the page that asked, and on Linux
+they can keep the app from shutting itself down while the tab that opened it is
+gone.
 
 ## Updating itself
 

@@ -2126,7 +2126,7 @@ def _queue_worker():
         # A package update is replacing the binary this job is about to run.
         # It takes seconds and the row simply stays where it is, which is a
         # better answer than starting against an exe that is being renamed.
-        while _pkg_busy.is_set():
+        while _maintenance_busy.is_set():
             time.sleep(0.2)
         with jobs_lock:
             job = jobs.get(job_id)
@@ -2748,6 +2748,15 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
         except OSError:
             pass
         _set_update(stage="error", msg=str(e)[:120])
+    finally:
+        # "launched" means the installer is running and this process is on
+        # its way out. Opening the gate then would let a download start into
+        # a program that is closing, which is the thing the gate is for.
+        # Every other ending — finished, failed, nothing to do — releases it.
+        with _update_lock:
+            handing_over = _update_state["stage"] == "launched"
+        if not handing_over:
+            _maintenance_busy.clear()
 
 
 @app.route("/update/check")
@@ -2788,13 +2797,6 @@ def update_apply():
     # a preflight.
     if request.headers.get("X-Aevum") != "1":
         return jsonify({"stage": "error", "msg": "bad request"}), 403
-    # The setup path starts the installer and exits the app a second and a
-    # half later. Anything still downloading would be orphaned mid-file with
-    # no window left to say so, and the queue behind it lost.
-    with jobs_lock:
-        if any(not j["done"] for j in jobs.values()):
-            return jsonify({"stage": "error", "busy": True,
-                            "msg": "a download is running"}), 409
     kind = install_kind()
     name = _UPDATE_ASSET.get(kind, "")
     if not name:
@@ -2807,9 +2809,24 @@ def update_apply():
         # second tab, walks through the gap and starts its own download into
         # the same part file.
         _update_state.update(stage="download", pct=0, msg="", path="")
-    def _fail(msg, code):
+    # Close the gate before looking for downloads, not after. The setup path
+    # starts the installer and exits this process a second and a half later,
+    # so a job that slips in between the look and the gate is a download with
+    # no program left to finish it. With the gate shut first, a job queued in
+    # that window is still sitting in the queue when we look, and we refuse.
+    _maintenance_busy.set()
+
+    def _fail(msg, code, busy=False):
+        _maintenance_busy.clear()
         _set_update(stage="error", msg=msg)
-        return jsonify({"stage": "error", "msg": msg}), code
+        body = {"stage": "error", "msg": msg}
+        if busy:
+            body["busy"] = True
+        return jsonify(body), code
+
+    with jobs_lock:
+        if any(not j["done"] for j in jobs.values()):
+            return _fail("a download is running", 409, busy=True)
     try:
         rel = _latest_release()
     except Exception as e:
@@ -2817,7 +2834,11 @@ def update_apply():
     latest = (rel.get("tag_name") or "").lstrip("vV")
     if _version_tuple(latest) <= _version_tuple(APP_VERSION):
         return _fail("already up to date", 400)
-    threading.Thread(target=_do_update, args=(rel, kind, name, latest), daemon=True).start()
+    try:
+        threading.Thread(target=_do_update, args=(rel, kind, name, latest),
+                         daemon=True).start()
+    except RuntimeError as e:
+        return _fail(str(e)[:120], 500)
     return jsonify(dict(_update_state))
 
 
@@ -2863,13 +2884,15 @@ PKG_REPOS = (("stable", "yt-dlp/yt-dlp"),
 _pkg_lock = threading.Lock()
 _pkg_state = {"stage": "idle", "msg": "", "version": ""}
 _pkg_cache = {"at": 0.0, "tags": {}}
-# Held for as long as the binary is being swapped. The route refuses to start
-# while a download runs, but a download can be queued a moment later and walk
-# into the swap — on Windows the old exe is renamed out from under it, and the
-# retry loop then re-runs a path that is not there any more. The queue waits
-# instead: a few seconds in "queued" beats a download that fails for a reason
-# nobody could guess.
-_pkg_busy = threading.Event()
+# Held while either updater is working, and the queue waits on it. Both need
+# it for the same reason: a download started during the work is a download
+# that gets hurt. Swapping yt-dlp renames the exe out from under a running
+# job on Windows; installing a new Aevum starts the installer and exits this
+# process a moment later, orphaning whatever was mid-file. A few seconds in
+# "queued" beats either.
+#
+# One flag for both, because the two must not be able to run at once either.
+_maintenance_busy = threading.Event()
 
 
 def _user_ytdlp() -> str:
@@ -3014,7 +3037,7 @@ def _do_pkg_update(channel: str):
             YTDLP = BUNDLED_YTDLP
         _set_pkg(stage="error", msg=str(e)[:120])
     finally:
-        _pkg_busy.clear()
+        _maintenance_busy.clear()
 
 
 @app.route("/packages/check")
@@ -3042,28 +3065,28 @@ def packages_apply():
     # CORS simple request and any open page could start it.
     if request.headers.get("X-Aevum") != "1":
         return jsonify({"stage": "error", "msg": "bad request"}), 403
+    # Claim the slot, close the gate, and only then look at anything else.
+    # Both orderings that read more naturally are wrong: checking for
+    # downloads first leaves a gap for one to start in, and asking GitHub
+    # first spends a subprocess and two HTTPS calls with the gate still open.
     # Windows will not let a running binary be overwritten, and on Linux
-    # swapping it mid-download is no better an idea. Wait for the queue.
-    with jobs_lock:
-        if any(not j["done"] for j in jobs.values()):
-            return jsonify({"stage": "error", "busy": True,
-                            "msg": "a download is running"}), 409
-    # Claim the slot, raise the flag, and only then go and ask GitHub
-    # anything. Deciding the channel first reads tidier and is wrong: it runs
-    # a subprocess and, on a cold cache, two HTTPS calls, and a download
-    # queued during those seconds finds the flag clear and starts against the
-    # binary about to be replaced — the exact race the flag exists to close.
-    # Everything that can fail from here on lowers it again.
+    # swapping it mid-download is no better an idea. Everything that can fail
+    # from here on opens the gate again.
     with _pkg_lock:
         if _pkg_state["stage"] == "working":
             return jsonify(dict(_pkg_state))
         _pkg_state.update(stage="working", msg="", version="")
-    _pkg_busy.set()
+    _maintenance_busy.set()
 
     def _stand_down(stage, msg, version=""):
-        _pkg_busy.clear()
+        _maintenance_busy.clear()
         _set_pkg(stage=stage, msg=msg, version=version)
 
+    with jobs_lock:
+        if any(not j["done"] for j in jobs.values()):
+            _stand_down("error", "a download is running")
+            return jsonify({"stage": "error", "busy": True,
+                            "msg": "a download is running"}), 409
     try:
         channel, _tag = _pick_channel(_ytdlp_version())
     except Exception as e:
@@ -3245,8 +3268,17 @@ def quit_app(icon, item):
     os._exit(0)
 
 
-def find_free_port(start: int = 5000) -> int:
-    for p in range(start, start + 60):
+# One range, used by the two functions that have to agree about it: the one
+# that picks a port to listen on and the one that goes looking for an Aevum
+# already listening. They were 60 apart and 10 apart, so a copy that landed
+# on 5012 was invisible to the next launch and a second instance started
+# beside it. Ten is the search's number, because each miss costs a timeout
+# and a cold start should not spend twenty seconds proving nothing is there.
+PORT_BASE, PORT_SPAN = 5000, 10
+
+
+def find_free_port(start: int = PORT_BASE) -> int:
+    for p in range(start, start + PORT_SPAN):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
                 s.bind(("127.0.0.1", p))
@@ -3307,7 +3339,7 @@ def _browser_watchdog():
 def _find_running_instance():
     """URL of an already-running Aevum on the usual ports, or None."""
     import urllib.request
-    for p in range(5000, 5010):
+    for p in range(PORT_BASE, PORT_BASE + PORT_SPAN):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{p}/ping", timeout=0.4) as r:
                 if json.loads(r.read().decode()).get("app") == "aevum":

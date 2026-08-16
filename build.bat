@@ -43,7 +43,13 @@ move /y "dist\Aevum.exe" "Portable\Aevum.exe" >nul
 
 echo [3/3] Building installer to Setup\ ...
 if not exist "Setup" mkdir "Setup"
-ISCC.exe installer.iss || echo (Inno Setup / ISCC not found on PATH - skipped installer)
+REM Clear the old one out first. Without this a failed ISCC run leaves the
+REM PREVIOUS version's installer sitting in Setup\, and the summary at the
+REM end points at it as though it were the build that just ran — which on a
+REM release day means shipping the last version under this version's name.
+if exist "Setup\Aevum-Setup.exe" del /q "Setup\Aevum-Setup.exe"
+ISCC.exe installer.iss || (echo INSTALLER FAILED - is Inno Setup ^(ISCC.exe^) on PATH? & pause & exit /b 1)
+if not exist "Setup\Aevum-Setup.exe" (echo INSTALLER MISSING - ISCC reported success but wrote nothing & pause & exit /b 1)
 
 rmdir /s /q build >nul 2>&1
 del /q Aevum.spec >nul 2>&1
