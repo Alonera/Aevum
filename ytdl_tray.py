@@ -156,6 +156,15 @@ def _find_binary(name: str, user_first: bool = True) -> str:
     cands += [os.path.join(_bin_dir(), fname), os.path.join(_bin_dir(), "bin", fname)]
     for cand in cands:
         if os.path.isfile(cand):
+            # Through to the real location, not the link that points at it.
+            # yt-dlp is itself a PyInstaller binary, and its bootloader checks
+            # that the child it re-launches came from the same executable as
+            # its parent. A junction or symlink anywhere in the path makes
+            # those two names differ and it refuses to start, with a line
+            # about "parent process has different executable" that says
+            # nothing to anyone. Measured here: the same file runs fine by its
+            # real path and fails through a junction to it.
+            cand = os.path.realpath(cand)
             # PyInstaller drops the +x bit of bundled binaries on Linux/macOS — restore it
             if sys.platform != "win32":
                 try:
@@ -682,11 +691,20 @@ function renderPkg(){
 }
 function checkPkg(){fetch('/packages/check').then(r=>r.json()).then(d=>{pkgInfo=d;renderPkg();}).catch(()=>{});}
 function pollPkg(){fetch('/packages/status').then(r=>r.json()).then(d=>{pkgState=d;renderPkg();
-  if(d.stage!=='working'){if(pkgTimer){clearInterval(pkgTimer);pkgTimer=null;}if(d.stage==='done')checkPkg();}}).catch(()=>{});}
+  // Also on 'idle', which is how the server reports "nothing to install":
+  // without a fresh check the line would keep offering the update it just
+  // found was unnecessary.
+  if(d.stage!=='working'){if(pkgTimer){clearInterval(pkgTimer);pkgTimer=null;}if(d.stage!=='error')checkPkg();}}).catch(()=>{});}
 function applyPkg(){pkgBtn.style.display='none';pkgState={stage:'working'};renderPkg();
   fetch('/packages/apply',{method:'POST',headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{pkgState=d;renderPkg();
     if(!pkgTimer)pkgTimer=setInterval(pollPkg,900);}).catch(()=>{pkgState={stage:'error',msg:''};renderPkg();});}
-function revertPkg(){fetch('/packages/revert',{method:'POST',headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(()=>{pkgState=null;checkPkg();}).catch(()=>{});}
+// A refusal here arrives as a 409 with a body, which fetch treats as a
+// perfectly good answer. Reading only the body would swallow it: the user
+// presses the link during a download, nothing happens, nothing is said.
+function revertPkg(){fetch('/packages/revert',{method:'POST',headers:{'X-Aevum':'1'}})
+  .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
+  .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};renderPkg();return;}
+    pkgState=null;checkPkg();}).catch(()=>{});}
 function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('open');
   if(settingsPanel.classList.contains('open')){
     // "Updated to X" has been read by now. Without this it stays on the line
@@ -2692,6 +2710,8 @@ def _do_pkg_update():
     global YTDLP
     dest = _user_ytdlp()
     previous = YTDLP
+    before = _ytdlp_version()
+    created = False
     try:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         if not os.path.isfile(dest):
@@ -2705,6 +2725,7 @@ def _do_pkg_update():
             if not _IS_WINDOWS:
                 os.chmod(staging, 0o755)
             os.replace(staging, dest)
+            created = True
         out = subprocess.run(
             [dest, "--update-to", PKG_CHANNEL], capture_output=True, text=True,
             timeout=300, env=_clean_env(),
@@ -2716,8 +2737,13 @@ def _do_pkg_update():
             # A yt-dlp that cannot answer --version cannot download either,
             # so put the packaged one back rather than leave the app holding
             # a binary it cannot use.
+            #
+            # The copy this call made is cleared away too. It is byte for byte
+            # the packaged one, so keeping it breaks nothing — but from the
+            # next launch on it is what _find_binary finds, and Settings would
+            # offer to undo an update that never happened.
             YTDLP = previous
-            if not ver:
+            if created or not ver:
                 try:
                     os.remove(dest)
                 except OSError:
@@ -2727,6 +2753,21 @@ def _do_pkg_update():
             _set_pkg(stage="error", msg=(msg[-1][:120] if msg else "update failed"))
             return
         _pkg_cache.update(at=0.0, tag="")
+        if ver == before:
+            # Pressing the button on an already-current copy succeeds without
+            # installing anything, and "updated to X" would be a plain
+            # untruth. Idle lets the line say what it says the rest of the
+            # time, which by then is that this is the newest one. A copy made
+            # for an update that turned out to be unnecessary goes away with
+            # it, rather than sitting there offering to be undone.
+            if created:
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+                YTDLP = previous
+            _set_pkg(stage="idle", msg="", version=ver)
+            return
         _set_pkg(stage="done", msg="", version=ver)
     except Exception as e:
         YTDLP = previous
