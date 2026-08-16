@@ -658,7 +658,9 @@ function renderUpd(){
     updBtn.style.display=updInfo.canApply?'':'none';
   }else{updHint.textContent=TS('updLatest');updBtn.style.display='none';}
 }
-function checkUpdate(){fetch('/update/check').then(r=>r.json()).then(d=>{updInfo=d;renderUpd();}).catch(()=>{});}
+// The header is what makes this a request only this page can send: it turns
+// the call into a preflighted one, and nothing here answers a preflight.
+function checkUpdate(){fetch('/update/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{updInfo=d;renderUpd();}).catch(()=>{});}
 function pollUpd(){fetch('/update/status').then(r=>r.json()).then(d=>{updState=d;renderUpd();
   if(d.stage!=='download'&&updTimer){clearInterval(updTimer);updTimer=null;}}).catch(()=>{});}
 function applyUpdate(){updBtn.style.display='none';updState={stage:'download',pct:0};renderUpd();
@@ -689,15 +691,22 @@ function renderPkg(){
   if(pkgInfo.newer){pkgHint.textContent=TS('pkgNew').replace('{v}',pkgInfo.latest);pkgBtn.style.display='';}
   else{pkgHint.textContent=TS('pkgLatest').replace('{v}',pkgInfo.current||'');pkgBtn.style.display='none';}
 }
-function checkPkg(){fetch('/packages/check').then(r=>r.json()).then(d=>{pkgInfo=d;renderPkg();}).catch(()=>{});}
+function checkPkg(){fetch('/packages/check',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{pkgInfo=d;renderPkg();}).catch(()=>{});}
 function pollPkg(){fetch('/packages/status').then(r=>r.json()).then(d=>{pkgState=d;renderPkg();
   // Also on 'idle', which is how the server reports "nothing to install":
   // without a fresh check the line would keep offering the update it just
   // found was unnecessary.
   if(d.stage!=='working'){if(pkgTimer){clearInterval(pkgTimer);pkgTimer=null;}if(d.stage!=='error')checkPkg();}}).catch(()=>{});}
+// A refused start is a 409 with a body, and polling after one wipes the
+// reason off the panel inside a second: the server never entered "working",
+// so the first status reply says "idle" and the message is gone. Only a
+// request that was actually accepted gets a poll timer.
 function applyPkg(){pkgBtn.style.display='none';pkgState={stage:'working'};renderPkg();
-  fetch('/packages/apply',{method:'POST',headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(d=>{pkgState=d;renderPkg();
-    if(!pkgTimer)pkgTimer=setInterval(pollPkg,900);}).catch(()=>{pkgState={stage:'error',msg:''};renderPkg();});}
+  fetch('/packages/apply',{method:'POST',headers:{'X-Aevum':'1'}})
+    .then(r=>r.json().then(b=>({ok:r.ok,body:b})))
+    .then(x=>{if(!x.ok){pkgState={stage:'error',busy:!!x.body.busy,msg:x.body.msg||''};renderPkg();return;}
+      pkgState=x.body;renderPkg();
+      if(!pkgTimer)pkgTimer=setInterval(pollPkg,900);}).catch(()=>{pkgState={stage:'error',msg:''};renderPkg();});}
 // A refusal here arrives as a 409 with a body, which fetch treats as a
 // perfectly good answer. Reading only the body would swallow it: the user
 // presses the link during a download, nothing happens, nothing is said.
@@ -1381,6 +1390,13 @@ _RETRYABLE_RE = re.compile(
 _MAX_ATTEMPTS = 3
 _RETRY_PAUSE = 2.0
 
+# Worth trying again is a wider set than worth blaming the site for. A reset
+# connection or a timeout is usually this end of the wire — the wifi went, the
+# laptop slept — and telling someone the site refused them, while hiding the
+# line that said what really happened, is worse than saying nothing. Only an
+# outright refusal earns that message.
+_REFUSED_RE = re.compile(r"HTTP Error 403", re.I)
+
 
 def _clip_duration_seconds(data: dict):
     """Length of the requested clip in seconds, or None if not a bounded clip."""
@@ -1559,9 +1575,23 @@ def run_job(job_id: str, data: dict, output_dir: str):
         started_at = time.time()
         # Three tries, because YouTube's refusals are per-URL and a fresh
         # extraction usually gets a URL it will honour (see _RETRYABLE_RE).
+        mark = 0
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             subs_embedded = False
             ff_last_bytes, ff_last_t = None, 0.0
+            # Both of these describe one attempt, not the job. A first
+            # attempt that reached the merge leaves code at "process", and
+            # the ffmpeg progress branch below refuses to run while it says
+            # that — so a retried clip would sit at 0% saying "processing"
+            # for its whole second attempt. item is the playlist counter,
+            # stale in the same way until a new one is printed.
+            code, item = ("clip" if is_clip else "download"), ""
+            # Where this attempt's output starts. Reading the whole buffer
+            # would let the previous attempt's error decide this one: a 403
+            # followed by "Private video" would look retryable and spend a
+            # third attempt on a video that is never coming.
+            with jobs_lock:
+                mark = len(jobs[job_id]["lines"])
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, encoding="utf-8", errors="replace", bufsize=1,
                                     env=_clean_env(),
@@ -1669,6 +1699,10 @@ def run_job(job_id: str, data: dict, output_dir: str):
                         cut = len(lines) - 400
                         del lines[:cut]
                         jobs[job_id]["read_idx"] = max(0, jobs[job_id]["read_idx"] - cut)
+                        # This attempt's start moves with everything else,
+                        # or the retry decision below reads from the wrong
+                        # place — on a long playlist, from nowhere at all.
+                        mark = max(0, mark - cut)
                     jobs[job_id]["progress"] = progress
                     jobs[job_id]["code"] = code
                     jobs[job_id]["item"] = item
@@ -1678,12 +1712,8 @@ def run_job(job_id: str, data: dict, output_dir: str):
             success = proc.returncode == 0 and not cancelled
             if success or cancelled or attempt == _MAX_ATTEMPTS:
                 break
-            # Only the tail matters. A playlist that lost one video to a 403
-            # an hour ago and is failing now for its own reasons should not
-            # be read as a retryable failure because that line is still in
-            # the buffer.
             with jobs_lock:
-                tail = jobs[job_id]["lines"][-40:]
+                tail = jobs[job_id]["lines"][mark:]
             if not any(_RETRYABLE_RE.search(l) for l in tail):
                 break
             with jobs_lock:
@@ -1745,7 +1775,10 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 # the site has moved and the copy of yt-dlp in this build
                 # does not know the new way yet. Raw "HTTP Error 403" tells
                 # the user nothing they can act on, so say that instead.
-                if any(_RETRYABLE_RE.search(l) for l in jobs[job_id]["lines"][-60:]):
+                # Read from this attempt only, and for a refusal only: the
+                # message names a number of tries and blames the site, and
+                # both halves have to be true when it appears.
+                if any(_REFUSED_RE.search(l) for l in jobs[job_id]["lines"][mark:]):
                     jobs[job_id]["staleerr"] = True
         with jobs_lock:
             title = jobs[job_id].get("title", "")
@@ -1952,6 +1985,11 @@ def _queue_worker():
             while not job_queue:
                 queue_cv.wait()
             job_id = job_queue.pop(0)
+        # A package update is replacing the binary this job is about to run.
+        # It takes seconds and the row simply stays where it is, which is a
+        # better answer than starting against an exe that is being renamed.
+        while _pkg_busy.is_set():
+            time.sleep(0.2)
         with jobs_lock:
             job = jobs.get(job_id)
             # Cancelled while it was still waiting: cancel_route already
@@ -2576,6 +2614,10 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
 
 @app.route("/update/check")
 def update_check():
+    # Same lock as /packages/check, and the same promise behind it. This one
+    # predates the packages line, and was reachable the same way.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"ok": False, "current": APP_VERSION}), 403
     kind = install_kind()
     try:
         rel = _latest_release()
@@ -2670,18 +2712,36 @@ PKG_CHANNEL = "nightly"
 _pkg_lock = threading.Lock()
 _pkg_state = {"stage": "idle", "msg": "", "version": ""}
 _pkg_cache = {"at": 0.0, "tag": ""}
+# Held for as long as the binary is being swapped. The route refuses to start
+# while a download runs, but a download can be queued a moment later and walk
+# into the swap — on Windows the old exe is renamed out from under it, and the
+# retry loop then re-runs a path that is not there any more. The queue waits
+# instead: a few seconds in "queued" beats a download that fails for a reason
+# nobody could guess.
+_pkg_busy = threading.Event()
 
 
 def _user_ytdlp() -> str:
-    """Where an updated yt-dlp lives, which is never inside the package."""
-    return os.path.join(_user_data_dir(), "bin",
-                        "yt-dlp" + (".exe" if _IS_WINDOWS else ""))
+    """Where an updated yt-dlp lives, which is never inside the package.
+
+    Resolved, for the reason _find_binary resolves: a redirected AppData or
+    a symlinked home would otherwise hand yt-dlp's bootloader two different
+    names for itself and it would refuse to start.
+    """
+    return os.path.realpath(os.path.join(_user_data_dir(), "bin",
+                            "yt-dlp" + (".exe" if _IS_WINDOWS else "")))
 
 
-def _ytdlp_version() -> str:
+def _ytdlp_version(exe: str = "") -> str:
+    """Version of a yt-dlp, defaulting to the one in use.
+
+    Naming one matters on the rollback paths: they need to know whether the
+    binary they just wrote will run, and by then it may not be the one the
+    app is pointing at.
+    """
     try:
         out = subprocess.run(
-            [YTDLP, "--version"], capture_output=True, text=True, timeout=20,
+            [exe or YTDLP, "--version"], capture_output=True, text=True, timeout=20,
             env=_clean_env(),
             creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0)
         return (out.stdout or "").strip().splitlines()[0].strip()
@@ -2770,12 +2830,32 @@ def _do_pkg_update():
             return
         _set_pkg(stage="done", msg="", version=ver)
     except Exception as e:
+        # The same clearing-up as the failure branch, and for a sharper
+        # reason: the likeliest way in here is the 300-second timeout, which
+        # can land while yt-dlp is part way through replacing itself. Putting
+        # the session back on the old binary is not enough — whatever is
+        # lying at dest is what the next launch would pick up. It stays only
+        # if it was already there before this call and still runs.
         YTDLP = previous
+        if created or not _ytdlp_version(dest):
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            YTDLP = BUNDLED_YTDLP
         _set_pkg(stage="error", msg=str(e)[:120])
+    finally:
+        _pkg_busy.clear()
 
 
 @app.route("/packages/check")
 def packages_check():
+    # A GET with no header of its own is reachable from any page the browser
+    # has open — an <img> tag is enough — and this one spawns a process and
+    # then talks to GitHub. README and SECURITY.md both promise that never
+    # happens unless Settings is opened, so the promise needs a lock on it.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"ok": False, "msg": "bad request"}), 403
     cur = _ytdlp_version()
     custom = os.path.isfile(_user_ytdlp())
     try:
@@ -2803,6 +2883,9 @@ def packages_apply():
         if _pkg_state["stage"] == "working":
             return jsonify(dict(_pkg_state))
         _pkg_state.update(stage="working", msg="", version="")
+    # Set before the thread exists, not inside it: a download queued in the
+    # gap would otherwise start against a binary about to be replaced.
+    _pkg_busy.set()
     threading.Thread(target=_do_pkg_update, daemon=True).start()
     with _pkg_lock:
         return jsonify(dict(_pkg_state))
@@ -2829,6 +2912,14 @@ def packages_revert():
         if any(not j["done"] for j in jobs.values()):
             return jsonify({"stage": "error", "busy": True,
                             "msg": "a download is running"}), 409
+    # Deleting the file an update is in the middle of writing leaves the app
+    # pointed at a name with nothing behind it, and every download after that
+    # fails with "yt-dlp not found". The page hides the link while an update
+    # runs; a second tab does not have to.
+    with _pkg_lock:
+        if _pkg_state["stage"] == "working":
+            return jsonify({"stage": "error", "busy": True,
+                            "msg": "an update is running"}), 409
     try:
         if os.path.isfile(_user_ytdlp()):
             os.remove(_user_ytdlp())

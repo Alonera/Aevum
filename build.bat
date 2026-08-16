@@ -15,6 +15,12 @@ if not exist "bin\yt-dlp.exe" echo MISSING: bin\yt-dlp.exe && pause && exit /b 1
 if not exist "bin\ffmpeg.exe" echo MISSING: bin\ffmpeg.exe && pause && exit /b 1
 if not exist "bin\ffprobe.exe" echo MISSING: bin\ffprobe.exe && pause && exit /b 1
 
+REM Say which yt-dlp is going in. Nothing here can tell a nightly from a
+REM stable, and the Linux workflow fetches its own copy, so the two halves of
+REM a release can quietly come from different channels. The date is the tell:
+REM a yt-dlp more than a few weeks old is one the sites have moved past.
+for /f "delims=" %%v in ('bin\yt-dlp.exe --version') do echo BUNDLING yt-dlp %%v
+
 REM The updater compares APP_VERSION against the newest release tag, so a
 REM constant left behind would hide a real update or offer one already here.
 REM Refuse to build while the three places disagree.
