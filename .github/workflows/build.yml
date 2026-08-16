@@ -76,8 +76,16 @@ jobs:
           # ends at the digits matches neither. 8.0* rather than 8.0.* for
           # that reason — the first attempt at this list would have failed the
           # build on 8.0, the very version the comment calls known-good.
+          # Three spellings in play, which is the whole reason this is a list
+          # and not an equality test: gyan writes 8.0-essentials_build-...,
+          # johnvansickle wrote 7.0.2-static, and BtbN writes
+          # n7.1.5-16-g9a4bb2c579-20260816 — a maintenance-branch snapshot of
+          # the 7.1 line, with the tag it descends from at the front. The n
+          # prefix is optional and everything after the version line is
+          # ignored, but 8.1 and anything newer stays refused in either
+          # spelling. Checked against all of those strings before shipping.
           case "$ver" in
-            7.*|8.0*) echo "ffmpeg $ver is a known-good version" ;;
+            7.*|n7.*|8.0*|n8.0*) echo "ffmpeg $ver is a known-good version" ;;
             *) echo "REFUSING to bundle ffmpeg $ver - only 7.x and 8.0.x are tested"
                echo "(8.1.x hangs on googlevideo range requests; newer majors are unverified)"
                exit 1 ;;
