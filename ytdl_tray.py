@@ -2801,20 +2801,28 @@ def update_apply():
     name = _UPDATE_ASSET.get(kind, "")
     if not name:
         return jsonify({"stage": "error", "msg": "no package for this build"}), 400
+    # Close the gate before anything else, and before looking for downloads
+    # rather than after: the setup path starts the installer and exits this
+    # process a second and a half later, so a job that slips in between the
+    # look and the gate is a download with no program left to finish it.
+    # With the gate shut first, a job queued in that window is still in the
+    # queue when we look, and we refuse. Failing to claim it means the other
+    # updater is working, and nothing here may disturb its gate.
+    if not _claim_maintenance():
+        return jsonify({"stage": "error", "busy": True,
+                        "msg": "an update is running"}), 409
     with _update_lock:
         if _update_state["stage"] in ("download", "launched"):
+            # Unreachable while the flag is honest — that state means
+            # _do_update holds it — but a claimed gate must never be left
+            # behind on a path that returns.
+            _maintenance_busy.clear()
             return jsonify(dict(_update_state))
         # Claim the slot inside the same lock that just tested it. Asking
         # GitHub for the release takes long enough that a second click, or a
         # second tab, walks through the gap and starts its own download into
         # the same part file.
         _update_state.update(stage="download", pct=0, msg="", path="")
-    # Close the gate before looking for downloads, not after. The setup path
-    # starts the installer and exits this process a second and a half later,
-    # so a job that slips in between the look and the gate is a download with
-    # no program left to finish it. With the gate shut first, a job queued in
-    # that window is still sitting in the queue when we look, and we refuse.
-    _maintenance_busy.set()
 
     def _fail(msg, code, busy=False):
         _maintenance_busy.clear()
@@ -2893,6 +2901,23 @@ _pkg_cache = {"at": 0.0, "tags": {}}
 #
 # One flag for both, because the two must not be able to run at once either.
 _maintenance_busy = threading.Event()
+# Taken only to test-and-set the flag above. Two updaters sharing one flag
+# does not by itself keep them apart: press both buttons and each claims its
+# own state, both raise the same flag, and the first to finish lowers it
+# while the other is still working — reopening the queue mid-swap, which is
+# the one thing the flag is for. Worse, an installer that exits this process
+# can land in the middle of a yt-dlp replacement. Claiming the flag under a
+# lock makes "either updater is working" mean what it says.
+_maintenance_lock = threading.Lock()
+
+
+def _claim_maintenance() -> bool:
+    """Raise the flag if nobody else holds it. False means someone does."""
+    with _maintenance_lock:
+        if _maintenance_busy.is_set():
+            return False
+        _maintenance_busy.set()
+        return True
 
 
 def _user_ytdlp() -> str:
@@ -3072,11 +3097,15 @@ def packages_apply():
     # Windows will not let a running binary be overwritten, and on Linux
     # swapping it mid-download is no better an idea. Everything that can fail
     # from here on opens the gate again.
+    if not _claim_maintenance():
+        # The other updater has it. Refuse without touching its gate.
+        return jsonify({"stage": "error", "busy": True,
+                        "msg": "an update is running"}), 409
     with _pkg_lock:
         if _pkg_state["stage"] == "working":
+            _maintenance_busy.clear()
             return jsonify(dict(_pkg_state))
         _pkg_state.update(stage="working", msg="", version="")
-    _maintenance_busy.set()
 
     def _stand_down(stage, msg, version=""):
         _maintenance_busy.clear()
