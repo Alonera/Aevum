@@ -2884,9 +2884,17 @@ def packages_apply():
             return jsonify(dict(_pkg_state))
         _pkg_state.update(stage="working", msg="", version="")
     # Set before the thread exists, not inside it: a download queued in the
-    # gap would otherwise start against a binary about to be replaced.
+    # gap would otherwise start against a binary about to be replaced. The
+    # thread clears it on its way out, so the only way it can be left set is
+    # a thread that never started — and then the queue would wait on a swap
+    # that is never coming, which is a hang rather than an error.
     _pkg_busy.set()
-    threading.Thread(target=_do_pkg_update, daemon=True).start()
+    try:
+        threading.Thread(target=_do_pkg_update, daemon=True).start()
+    except RuntimeError as e:
+        _pkg_busy.clear()
+        _set_pkg(stage="error", msg=str(e)[:120])
+        return jsonify({"stage": "error", "msg": "could not start"}), 500
     with _pkg_lock:
         return jsonify(dict(_pkg_state))
 

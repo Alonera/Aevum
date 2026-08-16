@@ -60,6 +60,15 @@ changing and it has to keep up. The same rules apply, with two differences:
   hash yt-dlp publishes. Aevum then prefers that copy over the one inside the
   package. If the new copy will not run, the old one is put back.
 - Nothing outside that one folder is written, and no installer runs.
+- **What the hash does and does not prove.** It proves the file arrived intact and
+  is the one the yt-dlp project published. It does not mean anyone here has read
+  that build. Before 1.2.6 the only yt-dlp Aevum would run was the one pinned into
+  the package at build time; now a newer one can arrive between releases, from the
+  nightly channel, and a bad day upstream reaches you without passing through us
+  first. That is the trade the feature makes, and it is deliberate: a yt-dlp frozen
+  for two months stops working against the sites, which is the failure that
+  actually happens. It never updates on its own — the button is yours to press —
+  and "back to the bundled version" is one click away.
 - **Back out with one click.** "back to the bundled version" deletes that file, and
   Aevum returns to the yt-dlp it shipped with.
 
