@@ -734,7 +734,11 @@ let updInfo=null,updState=null,updTimer=null,updAsked=false,appVer='';
 const updIcon=makeIcon(updBtn,function(s){
   if(s==='found'){
     if(updInfo&&updInfo.canApply)applyUpdate();
-    else if(updInfo&&updInfo.page)window.open(updInfo.page,'_blank','noopener');
+    // The address comes off the network, and "open whatever the server
+    // said" is a habit worth not having: a javascript: or data: URL would
+    // run in this page. It takes one comparison to require a real link.
+    else if(updInfo&&updInfo.page&&updInfo.page.indexOf('https://')===0)
+      window.open(updInfo.page,'_blank','noopener');
   }else if(s!=='work')checkUpdate();});
 function renderUpd(){
   // The version comes from /settings, which asks nothing of the network, so
@@ -856,11 +860,11 @@ function toggleSettings(e){e.stopPropagation();settingsPanel.classList.toggle('o
   }}
 function closeSettings(){settingsPanel.classList.remove('open');}
 document.addEventListener('click',e=>{if(settingsbox&&!settingsbox.contains(e.target))closeSettings();});
-function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).catch(()=>{});}
-function loadSettings(){fetch('/settings').then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;
+function saveCfg(o){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify(o)}).catch(()=>{});}
+function loadSettings(){fetch('/settings',{headers:{'X-Aevum':'1'}}).then(r=>r.json()).then(s=>{startupToggle.checked=!!s.startup;menuToggle.checked=!!s.menu;
   appVer=s.version||'';pkgVer=s.pkgVersion||'';renderUpd();renderPkg();const cs=s.canStartup!==false;startupRow.style.display=cs?'flex':'none';settingsHint.style.display=cs?'block':'none';menuRow.style.display=s.canMenu?'flex':'none';menuRow.style.marginTop=cs?'13px':'0';settingsMenuHint.style.display=s.canMenu?'block':'none';if(s.lang&&I18N[s.lang]&&s.lang!==curLang)applyLang(s.lang);if(s.theme&&THEME_LIST.some(x=>x[0]===s.theme)&&s.theme!==curTheme)applyTheme(s.theme);}).catch(()=>{});}
-function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startup:on})}).catch(()=>{});}
-function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
+function setStartup(on){fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({startup:on})}).catch(()=>{});}
+function setMenu(on){menuToggle.disabled=true;fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({menu:on})}).then(r=>r.json()).then(s=>{menuToggle.checked=!!s.menu;}).catch(()=>{menuToggle.checked=!on;}).finally(()=>{menuToggle.disabled=false;});}
 // ── full-window interactive particle network ──
 const cv=document.getElementById('bg'),cx=cv.getContext('2d',{alpha:true});
 const REDUCE=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -3044,34 +3048,40 @@ def packages_apply():
         if any(not j["done"] for j in jobs.values()):
             return jsonify({"stage": "error", "busy": True,
                             "msg": "a download is running"}), 409
-    # Decide the channel here rather than in the worker: a failure to reach
-    # GitHub should come back as a refusal to start, not as a thread that
-    # sets the busy flag and then discovers it has nothing to do.
+    # Claim the slot, raise the flag, and only then go and ask GitHub
+    # anything. Deciding the channel first reads tidier and is wrong: it runs
+    # a subprocess and, on a cold cache, two HTTPS calls, and a download
+    # queued during those seconds finds the flag clear and starts against the
+    # binary about to be replaced — the exact race the flag exists to close.
+    # Everything that can fail from here on lowers it again.
+    with _pkg_lock:
+        if _pkg_state["stage"] == "working":
+            return jsonify(dict(_pkg_state))
+        _pkg_state.update(stage="working", msg="", version="")
+    _pkg_busy.set()
+
+    def _stand_down(stage, msg, version=""):
+        _pkg_busy.clear()
+        _set_pkg(stage=stage, msg=msg, version=version)
+
     try:
         channel, _tag = _pick_channel(_ytdlp_version())
     except Exception as e:
+        _stand_down("error", str(e)[:120])
         return jsonify({"stage": "error", "msg": str(e)[:120]}), 502
     if not channel:
         # Nothing newer on either channel. The page reads this the same way
         # it reads a finished update: a tick, and no claim of having done
         # anything.
-        _set_pkg(stage="idle", msg="", version=_ytdlp_version())
-        return jsonify(dict(_pkg_state))
-    with _pkg_lock:
-        if _pkg_state["stage"] == "working":
+        _stand_down("idle", "", _ytdlp_version())
+        with _pkg_lock:
             return jsonify(dict(_pkg_state))
-        _pkg_state.update(stage="working", msg="", version="")
-    # Set before the thread exists, not inside it: a download queued in the
-    # gap would otherwise start against a binary about to be replaced. The
-    # thread clears it on its way out, so the only way it can be left set is
-    # a thread that never started — and then the queue would wait on a swap
-    # that is never coming, which is a hang rather than an error.
-    _pkg_busy.set()
     try:
         threading.Thread(target=_do_pkg_update, args=(channel,), daemon=True).start()
     except RuntimeError as e:
-        _pkg_busy.clear()
-        _set_pkg(stage="error", msg=str(e)[:120])
+        # A flag left raised with no thread to lower it would park the queue
+        # on a swap that is never coming: a hang rather than an error.
+        _stand_down("error", str(e)[:120])
         return jsonify({"stage": "error", "msg": "could not start"}), 500
     with _pkg_lock:
         return jsonify(dict(_pkg_state))
@@ -3118,6 +3128,15 @@ def packages_revert():
 
 @app.route("/settings")
 def settings_get():
+    # Guarded like the check routes, and for a reason this route only
+    # acquired in 1.2.6: reading the yt-dlp version means running it. Before
+    # that this was a config read and an unguarded GET was merely untidy;
+    # now an <img> tag on any page the browser has open could spawn a
+    # process on every load. Origin is absent on subresource GETs, so the
+    # same-origin guard alone does not stop it — a header only our own page
+    # sends does.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
     cfg = _load_config()
     return jsonify({
         "startup": get_startup_enabled(),
@@ -3138,6 +3157,12 @@ def settings_get():
 
 @app.route("/settings", methods=["POST"])
 def settings_set():
+    # The JSON content type already forces a preflight that nothing here
+    # answers, so this was never reachable cross-origin. The header is
+    # carried anyway: one rule for every route that changes something, and
+    # no reasoning about which content types are simple.
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
     data = request.json or {}
     if "menu" in data and sys.platform.startswith("linux"):
         try:
