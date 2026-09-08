@@ -41,13 +41,13 @@ You only need to do this once.
 ## Features
 
 - **Any site** — powered by yt-dlp, works far beyond YouTube.
-- **Video or audio** — pick resolution (up to 4K), container (MP4/MKV/WebM, plus an editor-friendly H.264 preset), or extract audio (MP3/M4A/Opus/FLAC/WAV) at your chosen bitrate.
+- **Video or audio** — pick resolution (up to 4K), container (MP4/MKV/WebM, plus an editor-friendly H.264 preset), or extract audio (MP3/M4A/Opus/FLAC/WAV). Bitrate is an encoding target, not a promise about source quality; compatible streams can be copied. Original saves the available separate audio stream without re-encoding. A site with only combined video/audio can use the conversion formats instead. Opus offers up to 256k so mono sources work too; MP3 retains 320k.
 - **Preview before you download** — paste a link and see the title, duration and thumbnail; resolutions the video doesn't offer are dimmed, with size hints on the rest.
-- **Clips** — download just a section (start → end). Frame-exact by default at full speed; an optional lossless mode keeps the original stream bytes. Works for audio too.
-- **Thumbnail** — save the cover image alongside the video.
+- **Clips** — download just a section (start → end). The existing exact-cut and lossless video options remain. Original audio preserves the stream, so its clip boundaries may be approximate.
+- **Thumbnail** — save the cover image alongside the download. The same option is available in Audio mode and embeds the cover into MP3/M4A/Opus/FLAC when supplied by the site. WAV and Original keep a separate JPG; no audio conversion is added just to insert a cover.
 - **Subtitles** — embeds the uploader's own subtitles into the file (best-effort; never blocks the download).
 - **Playlists** — download a whole playlist into an auto-created folder; endless YouTube Mixes are safely capped.
-- **Login-only content** — use your browser's cookies to download from sites where you're signed in (your own account). Firefox works. Chrome, Edge and Brave no longer hand their cookies to any other program, Chrome's own change, and nothing outside Chrome can undo it.
+- **Login-only content** — choose Chrome / Edge / Firefox / Brave / Zen and press the cookie button to collect the browser session. If extraction fails, a reason is shown and manual Netscape-format cookies.txt selection opens. Raw browser databases are not text exports. Valid cookies still need an account/session permitted to access the content; importing a file cannot guarantee access.
 - **Queue** — press Download while one is running and the next link lines up behind it. Every entry gets its own row with the size, speed and time left, and you can drop one back out of the queue.
 - **Stop button** — cancel the running download at any time.
 - **Updates itself** — Settings names the version you are running and asks GitHub for the newest one when you open the panel. That check is a network request; Aevum makes three of those in total, and none of them go anywhere but GitHub. What it fetches is checked against the SHA-256 the release publishes before anything is opened.
@@ -80,7 +80,60 @@ python -m PyInstaller --onefile --noconsole --name Aevum ^
   --add-data "fonts;fonts" ytdl_tray.py
 ```
 
-Or just run `build.bat`.
+Or just run `build.bat`. To preserve existing outputs and build a fresh Windows
+release with tests, source ZIP, manifest and SHA-256 checksums, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1
+```
+
+The isolated build writes to a new timestamped folder under `releases/` and
+refuses to overwrite an existing output folder. Installer and application UI
+both offer all eight languages. Detailed audio/cookie messages are translated
+in every language, including the automatic bitrate label.
+
+## Automatic and manual cookies
+
+The **Zen** chip after Brave uses yt-dlp's Firefox extraction with Zen's own
+profile directory (`firefox:<Zen profile root>`), never the Firefox profile.
+On Windows the normal location is `%APPDATA%/zen/Profiles`. Standard macOS,
+Linux and Flatpak locations are also detected; custom/portable profiles can
+use a manually exported cookie file. The upload/reset/session behavior is
+identical to the other browser choices.
+
+Select a browser, then press the cookie button to collect its cookies through
+yt-dlp's normal browser extraction. No video or network request is needed for
+this step. A check confirms collection, not permission to access every video.
+Browser selection without pressing the button still uses the existing
+cookies-from-browser behavior during previews and downloads.
+
+If collection fails (missing profile, locked/encrypted database, empty jar or
+timeout), a short reason is shown and manual selection opens. On Windows the
+native picker starts in Downloads when available, since an exported file is
+not normally in the hidden browser profile. Other platforms or a failed native
+picker use the browser's file input. A small `Select cookies.txt` control stays
+available if the browser blocks an asynchronous file dialog or you cancel it.
+
+The helper below the choices changes with the selected browser. Manual import
+needs a **Netscape-format cookies.txt** exported from your own signed-in session
+using a cookie-export extension. This is not a file browsers create by default:
+do not select Chromium's `Cookies` database or Firefox/Zen's `cookies.sqlite`.
+Use a trusted exporter, export only what is needed, and never share the file.
+
+A successful collection or import shows a small check and a remove control. It takes
+precedence over browser extraction for both preview and download. Changing
+browser or removing the file returns new jobs to browser extraction; jobs
+already queued retain the selection they were submitted with.
+
+Imports exist only for the backend session, never in config or history.
+Each subprocess gets its own temporary copy; that copy is removed after the
+operation, while the session retains the import for more downloads. Closing
+Aevum clears the session and attempts to remove any remaining copies. The
+original file you selected is not changed or deleted. See [SECURITY](SECURITY.md).
+
+See [the release checklist](docs/releasing.md) for build, test and update
+compatibility checks. Local builds go under `releases/`; only the assets on
+the GitHub Releases page are published releases.
 
 ## Licenses
 

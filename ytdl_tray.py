@@ -20,6 +20,10 @@ import time
 import subprocess
 import shutil
 import socket
+import atexit
+import signal
+from aevum_cookies import (BROWSERS, MAX_COOKIE_BYTES, CookieError, SessionCookies,
+                           browser_cookie_source, browser_directory, select_cookie_file)
 from pathlib import Path
 import urllib.request
 from urllib.parse import urlparse, parse_qs
@@ -61,12 +65,17 @@ job_queue = []
 queue_cv = threading.Condition()
 
 PORT = 5000
+_session_cookies = SessionCookies()
+_cookie_dialog_lock = threading.Lock()
+_cookie_export_proc = None  # protected by _maintenance_lock; never logged
+_shutting_down = threading.Event()
+atexit.register(lambda: _session_cookies.cleanup())
 
 # The one place the version is written in code. version.txt and installer.iss
 # carry it too — build.bat refuses to build when the three disagree, because
 # the updater compares this string against the newest release tag and a stale
 # constant would either hide a real update or offer one that is already here.
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
 UPDATE_REPO = "Alonera/Aevum"
 
 # ── Page liveness tracking (on Linux the app lives with the browser tab) ─────
@@ -241,6 +250,13 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
 .lbl{font-size:10px;color:rgba(255,255,255,0.38);letter-spacing:.5px;width:66px;flex-shrink:0;white-space:nowrap}
 .hint{font-size:10px;color:rgba(255,255,255,0.3);line-height:1.55;padding-left:72px;margin-bottom:6px}
 .chips{display:flex;gap:5px;flex-wrap:wrap}
+.cookie-chips{flex:1;min-width:0;gap:4px}
+.cookie-chips .chip{padding:6px 8px}
+.cookie-load{display:inline-flex;align-items:center;justify-content:center}
+.chip:disabled{opacity:.35;cursor:default;transform:none}
+.cookie-status{color:rgba(var(--accent),.72)}
+.cookie-reset{border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:0 5px}
+.cookie-warning{color:rgba(255,160,100,.7)}
 .chip{border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:10px;padding:6px 11px;cursor:pointer;border:1px solid rgba(255,255,255,0.11);background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.55);letter-spacing:.2px;transition:border-color .18s,background .18s,color .18s,transform .12s;line-height:1.4;user-select:none}
 .chip:hover{border-color:rgba(255,255,255,0.26);color:rgba(255,255,255,0.85);transform:translateY(-1px)}
 .chip:active{transform:scale(0.93)}
@@ -439,7 +455,7 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
         <div class="chips">
           <button class="chip" id="subsbtn" onclick="toggleFlag('subs',this)" data-i18n="subtitles">Subtitles</button>
           <button class="chip" id="mutebtn" onclick="toggleFlag('mute',this)" data-i18n="mute">Mute</button>
-          <button class="chip" id="thumbbtn" onclick="toggleFlag('thumb',this)" data-i18n="thumbnail">Thumbnail</button>
+          <button class="chip" id="thumbbtn" data-flag="thumb" onclick="toggleFlag('thumb',this)" data-i18n="thumbnail">Thumbnail</button>
         </div>
       </div>
     </div>
@@ -448,6 +464,7 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
       <div class="row" style="animation-delay:.16s">
         <span class="lbl" data-i18n="format">Format</span>
         <div class="chips">
+          <button class="chip" data-g="fmt" data-v="original" onclick="pick(this)" data-i18n="audioOriginal">Original</button>
           <button class="chip on" data-g="fmt" data-v="mp3"  onclick="pick(this)">MP3</button>
           <button class="chip"    data-g="fmt" data-v="m4a"  onclick="pick(this)">M4A</button>
           <button class="chip"    data-g="fmt" data-v="opus" onclick="pick(this)">Opus</button>
@@ -455,31 +472,42 @@ body::before{content:'';position:fixed;inset:-25%;z-index:0;pointer-events:none;
           <button class="chip"    data-g="fmt" data-v="wav"  onclick="pick(this)">WAV</button>
         </div>
       </div>
-      <div class="row" style="animation-delay:.22s">
+      <div class="row" id="bitrateRow" style="animation-delay:.22s">
         <span class="lbl" data-i18n="bitrate">Bitrate</span>
         <div class="chips">
-          <button class="chip"    data-g="br" data-v="best" onclick="pick(this)" data-i18n="source">Source</button>
+          <button class="chip"    data-g="br" data-v="best" onclick="pick(this)" data-i18n="audioVbr">VBR best</button>
           <button class="chip"    data-g="br" data-v="320k" onclick="pick(this)">320k</button>
           <button class="chip on" data-g="br" data-v="192k" onclick="pick(this)">192k</button>
           <button class="chip"    data-g="br" data-v="128k" onclick="pick(this)">128k</button>
           <button class="chip"    data-g="br" data-v="96k"  onclick="pick(this)">96k</button>
         </div>
       </div>
+      <div class="row">
+        <span class="lbl" data-i18n="options">Options</span>
+        <div class="chips"><button class="chip" data-flag="thumb" onclick="toggleFlag('thumb',this)" data-i18n="thumbnail">Thumbnail</button></div>
+      </div>
+      <div class="hint" id="audioHint"></div>
     </div>
 
     <div class="divider"></div>
 
     <div class="row" style="margin-bottom:6px">
       <span class="lbl" data-i18n="cookies">Cookies</span>
-      <div class="chips">
+      <div class="chips cookie-chips">
         <button class="chip on" data-g="cookies" data-v="none"    onclick="pick(this)" data-i18n="none">None</button>
         <button class="chip"    data-g="cookies" data-v="chrome"  onclick="pick(this)">Chrome</button>
         <button class="chip"    data-g="cookies" data-v="edge"    onclick="pick(this)">Edge</button>
         <button class="chip"    data-g="cookies" data-v="firefox" onclick="pick(this)">Firefox</button>
         <button class="chip"    data-g="cookies" data-v="brave"   onclick="pick(this)">Brave</button>
+        <button class="chip"    data-g="cookies" data-v="zen"     onclick="pick(this)">Zen</button>
+        <button class="chip cookie-load" id="cookieLoad" onclick="loadCookie()" data-i18n-title="cookieLoad" aria-label="Get browser cookies">
+          <svg width="13" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v13m-5-5 5 5 5-5M4 15v6h16v-6"/></svg>
+        </button>
       </div>
     </div>
-    <div class="hint" data-i18n="cookiesHint">Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.</div>
+    <div class="hint" id="cookiesHint">Select a browser for login or age checks.</div>
+    <div class="hint" id="cookieFeedback" aria-live="polite"></div>
+    <input type="file" id="cookieFile" accept=".txt,text/plain" hidden/>
 
     <div class="row" style="margin-top:10px">
       <span class="lbl" data-i18n="playlist">Playlist</span>
@@ -580,8 +608,8 @@ const inp=document.getElementById('u'),gb=document.getElementById('gb');
 const pw=document.getElementById('pw'),pf=document.getElementById('pf'),pt=document.getElementById('pt');
 const glow=document.getElementById('glow'),root=document.getElementById('root');
 const note=document.getElementById('note'),stopbtn=document.getElementById('stopbtn');
-let jobId=null,pollTimer=null;
-const state={mode:'video',vq:'1080p',cont:'mp4',fmt:'mp3',br:'192k',cookies:'none',subs:false,mute:false,thumb:false,playlist:false,clipLossless:false};
+let jobId=null,pollTimer=null,downloadPending=false;
+const state={mode:'video',vq:'1080p',cont:'mp4',fmt:'mp3',br:'192k',cookies:'none',cookieToken:'',subs:false,mute:false,thumb:false,playlist:false,clipLossless:false};
 // ── i18n strings ──
 const I18N={
  en:{urlPlaceholder:"Paste a video link — any site works",download:"Download",mode:"Mode",video:"Video",audio:"Audio",quality:"Quality",best:"Best",container:"Container",options:"Options",subtitles:"Subtitles",mute:"Mute",format:"Format",bitrate:"Bitrate",source:"Source",cookies:"Cookies",none:"None",cookiesHint:"Use your browser's session to download from sites where you must be logged in (your own account). Close that browser first.",playlist:"Playlist",downloadPlaylist:"Download Playlist",folder:"Folder",history:"History",downloads:"Downloads",queued:"queued",qRemove:"Remove from queue",stop:"Stop",connecting:"connecting...",starting:"starting...",downloading:"Downloading",processing:"processing...",completed:"completed ✓",stopping:"stopping...",stopped:"stopped",errorGeneric:"an error occurred — check the console",connError:"connection error",mixWarn:"⚠ YouTube Mix (radio) is endless — only the first 50 videos will be downloaded.",mixInfo:"ℹ This is a Mix link. Playlist is off, only this video will download.",appClosed:"⚠ Aevum has quit — relaunch the app to continue.",probeLoading:"loading info…",clipDownloading:"downloading clip…",probeNA:"not available",probeVideos:"videos",probeInPlaylist:"playlist link",clip:"Clip",clipHint:"optional — downloads only this section",subsSkipped:"subtitles were unavailable (skipped)",clipLossless:"Lossless cut",clipLosslessHint:"No re-encode: the cut snaps to the nearest keyframe, so the clip may start a few seconds early.",thumbnail:"Thumbnail",h264Cap:"⚠ H.264 only goes up to {h}p on this video — that is what will download.",cookiesLocked:"Chrome keeps its cookies to itself now — Firefox still works, Edge and Brave do not.",h264Unsure:"This site does not say which codec it serves. Aevum will look for H.264 and usually finds it, but cannot promise it.",h264None:"⚠ This video has no H.264. You will get whatever sits in an mp4, which editors may refuse.",formatMissing:"the format you asked for is not available for this video",siteChanged:"the site refused the download three times — try again, or update Packages in Settings"},
@@ -593,18 +621,365 @@ const I18N={
  pt:{urlPlaceholder:"Cole um link de vídeo — qualquer site funciona",download:"Baixar",mode:"Modo",video:"Vídeo",audio:"Áudio",quality:"Qualidade",best:"Melhor",container:"Formato",options:"Opções",subtitles:"Legendas",mute:"Mudo",format:"Formato",bitrate:"Bitrate",source:"Original",cookies:"Cookies",none:"Nenhum",cookiesHint:"Usa a sessão do seu navegador para baixar de sites onde você precisa estar logado (sua própria conta). Feche esse navegador primeiro.",playlist:"Playlist",downloadPlaylist:"Baixar playlist",folder:"Pasta",history:"Histórico",downloads:"Downloads",queued:"na fila",qRemove:"Remover da fila",stop:"Parar",connecting:"conectando...",starting:"iniciando...",downloading:"Baixando",processing:"processando...",completed:"concluído ✓",stopping:"parando...",stopped:"parado",errorGeneric:"ocorreu um erro — verifique o console",connError:"erro de conexão",mixWarn:"⚠ O Mix (rádio) do YouTube é infinito — apenas os primeiros 50 vídeos serão baixados.",mixInfo:"ℹ Este é um link Mix. A playlist está desligada, apenas este vídeo será baixado.",appClosed:"⚠ O Aevum foi encerrado — reabra o aplicativo para continuar.",probeLoading:"carregando…",clipDownloading:"baixando clipe…",probeNA:"indisponível",probeVideos:"vídeos",probeInPlaylist:"link de playlist",clip:"Clipe",clipHint:"opcional — baixa só esta seção",subsSkipped:"legendas indisponíveis (ignoradas)",clipLossless:"Corte sem perdas",clipLosslessHint:"Sem recodificação: o corte encaixa no keyframe mais próximo, o clipe pode começar alguns segundos antes.",thumbnail:"Miniatura",h264Cap:"⚠ Neste vídeo o H.264 vai só até {h}p — é isso que será baixado.",cookiesLocked:"O Chrome não entrega mais seus cookies — o Firefox ainda funciona, Edge e Brave não.",h264Unsure:"Este site não informa o códec. O Aevum vai procurar H.264 e normalmente encontra, mas não pode prometer.",h264None:"⚠ Este vídeo não tem H.264. Você receberá o que estiver num mp4, e editores podem recusar.",formatMissing:"o formato que você pediu não existe para este vídeo",siteChanged:"o site recusou o download três vezes — tente de novo ou atualize os Pacotes nas Configurações"},
  ru:{urlPlaceholder:"Вставьте ссылку на видео — подходит любой сайт",download:"Скачать",mode:"Режим",video:"Видео",audio:"Аудио",quality:"Качество",best:"Лучшее",container:"Формат",options:"Опции",subtitles:"Субтитры",mute:"Без звука",format:"Формат",bitrate:"Битрейт",source:"Источник",cookies:"Cookies",none:"Нет",cookiesHint:"Использует сессию вашего браузера для загрузки с сайтов, где нужен вход (ваш аккаунт). Сначала закройте этот браузер.",playlist:"Плейлист",downloadPlaylist:"Скачать плейлист",folder:"Папка",history:"История",downloads:"Загрузки",queued:"в очереди",qRemove:"Убрать из очереди",stop:"Стоп",connecting:"подключение...",starting:"запуск...",downloading:"Загрузка",processing:"обработка...",completed:"готово ✓",stopping:"остановка...",stopped:"остановлено",errorGeneric:"произошла ошибка — проверьте консоль",connError:"ошибка соединения",mixWarn:"⚠ YouTube Mix (радио) бесконечен — будут загружены только первые 50 видео.",mixInfo:"ℹ Это ссылка Mix. Плейлист выключен, будет загружено только это видео.",appClosed:"⚠ Aevum завершил работу — перезапустите приложение, чтобы продолжить.",probeLoading:"загрузка…",clipDownloading:"загрузка клипа…",probeNA:"недоступно",probeVideos:"видео",probeInPlaylist:"ссылка плейлиста",clip:"Клип",clipHint:"необязательно — скачает только этот отрезок",subsSkipped:"субтитры недоступны (пропущены)",clipLossless:"Без перекодирования",clipLosslessHint:"Разрез по ближайшему ключевому кадру — клип может начаться на несколько секунд раньше.",thumbnail:"Обложка",h264Cap:"⚠ У этого видео H.264 доступен только до {h}p — это и скачается.",cookiesLocked:"Chrome больше не отдаёт свои cookies — Firefox ещё работает, Edge и Brave нет.",h264Unsure:"Этот сайт не сообщает кодек. Aevum поищет H.264 и обычно находит, но обещать не может.",h264None:"⚠ У этого видео нет H.264. Вы получите то, что лежит в mp4 — редакторы могут его не принять.",formatMissing:"запрошенный формат недоступен для этого видео",siteChanged:"сайт трижды отклонил загрузку — попробуйте снова или обновите Пакеты в настройках"}
 };
+const EXTRA_TEXT={
+  "en": {
+    "audioOriginal": "Original",
+    "audioVbr": "VBR best",
+    "audioHint": "Bitrate is an encoding target, not the source quality. Compatible audio may be copied.",
+    "audioOriginalHint": "Keeps the available audio stream; format and quality depend on the source. Clip boundaries may be approximate.",
+    "audioLosslessHint": "Lossless output cannot restore detail missing from the source.",
+    "coverSidecar": "Original / WAV: the cover is saved as a separate JPG.",
+    "cookieLoad": "Get browser cookies",
+    "cookieLoaded": "✓ Cookies loaded",
+    "cookieClear": "Remove loaded cookies",
+    "cookiesHint": "Only needed for login or age checks. Use your browser session, or select an exported Netscape cookies.txt. Raw browser databases are not supported.",
+    "cookieChooseBrowser": "Select a browser first.",
+    "cookieInvalid": "Select a valid Netscape-format cookies.txt export.",
+    "cookieDatabase": "This is a browser database. Select an exported Netscape cookies.txt instead.",
+    "cookieEmpty": "This file contains no cookies.",
+    "cookieExpired": "All cookies in this file have expired. Export a new file after signing in.",
+    "cookieTooLarge": "Cookie files must be no larger than 2 MiB.",
+    "cookieUnreadable": "The cookie file could not be read.",
+    "cookieStale": "Manual cookies are no longer available for this browser. Select the file again.",
+    "cookieLimit": "Too many cookie imports this session. Remove an unused import or restart Aevum.",
+    "cookieBusy": "Another cookie operation is in progress.",
+    "cookieFolderMissing": "Browser profile folder not found; the normal file picker was used.",
+    "cookiePickerFallback": "Use the file button again to choose cookies.txt.",
+    "cookieWorking": "Selecting cookies…",
+    "cookieDecrypt": "Browser cookies could not be decrypted. Try an exported cookies.txt or Firefox.",
+    "cookieLocked": "Browser cookies are locked. Close the browser or select an exported cookies.txt.",
+    "cookieAge": "Sign in with an age-verified account, then select fresh cookies.txt from that session.",
+    "cookieLogin": "This site needs a valid signed-in session. Select fresh cookies.txt from your own account.",
+    "cookieOrOptionsInvalid": "Check the selected format and cookies; reload the cookie file if needed.",
+    "downloadFolderError": "Cannot write to the selected download folder.",
+    "audioAuto": "Auto",
+    "appClosed": "Aevum is closing. Reopen it to continue.",
+    "cookieNoneHint": "Select a browser for content requiring login or age verification.",
+    "cookieBrowserHint": "{browser}: the button tries to collect cookies automatically. If it fails, select cookies.txt exported from this browser in Netscape format using a cookie-export extension, not the {database} database. cookies.txt is not a built-in profile file.",
+    "cookieAutoLoaded": "✓ Browser cookies loaded",
+    "cookieAutoWorking": "Reading browser cookies…",
+    "cookieManualSelect": "Select cookies.txt",
+    "cookieAutoFailed": "Automatic collection failed. Select an exported cookies.txt.",
+    "cookieAutoTimeout": "Reading cookies timed out. Select an exported cookies.txt.",
+    "cookieAutoEmpty": "No unexpired cookies found. Sign in or select a fresh cookies.txt.",
+    "cookieProfileMissing": "Browser cookie profile not found. Select an exported cookies.txt.",
+    "cookieMaintenance": "An update is running. Wait or select an exported cookies.txt."
+  },
+  "tr": {
+    "audioOriginal": "Orijinal",
+    "audioVbr": "VBR en iyi",
+    "audioHint": "Bit hızı kodlama hedefidir; kaynak kalitesi değildir. Uyumlu ses doğrudan kopyalanabilir.",
+    "audioOriginalHint": "Mevcut ses akışını korur; biçim ve kalite kaynağa bağlıdır. Klip sınırları yaklaşık olabilir.",
+    "audioLosslessHint": "Kayıpsız çıktı, kaynakta olmayan ayrıntıyı geri getirmez.",
+    "coverSidecar": "Orijinal / WAV: kapak ayrı JPG olarak kaydedilir.",
+    "cookieLoad": "Tarayıcı çerezlerini al",
+    "cookieLoaded": "✓ Çerezler yüklendi",
+    "cookieClear": "Yüklenen çerezleri kaldır",
+    "cookiesHint": "Yalnızca oturum veya yaş doğrulaması için gerekebilir. Tarayıcı oturumunu kullan ya da dışa aktarılmış Netscape cookies.txt seç. Ham tarayıcı veritabanları desteklenmez.",
+    "cookieChooseBrowser": "Önce bir tarayıcı seç.",
+    "cookieInvalid": "Geçerli bir Netscape-format cookies.txt dosyası seç.",
+    "cookieDatabase": "Bu bir tarayıcı veritabanı. Dışa aktarılmış Netscape cookies.txt dosyasını seç.",
+    "cookieEmpty": "Dosyada çerez bulunmuyor.",
+    "cookieExpired": "Dosyadaki çerezlerin süresi dolmuş. Oturum açıp yeniden dışa aktar.",
+    "cookieTooLarge": "Çerez dosyası en fazla 2 MiB olmalı.",
+    "cookieUnreadable": "Çerez dosyası okunamadı.",
+    "cookieStale": "Bu tarayıcı için manuel çerez artık mevcut değil. Dosyayı yeniden seç.",
+    "cookieLimit": "Bu oturumda çok fazla çerez yüklendi. Kullanılmayanı kaldır veya Aevum'u yeniden aç.",
+    "cookieBusy": "Başka bir çerez işlemi sürüyor.",
+    "cookieFolderMissing": "Tarayıcı profil klasörü bulunamadı; normal dosya seçimi kullanıldı.",
+    "cookiePickerFallback": "cookies.txt seçmek için dosya düğmesine tekrar bas.",
+    "cookieWorking": "Çerez seçiliyor…",
+    "cookieDecrypt": "Tarayıcı çerezleri çözülemedi. Dışa aktarılmış cookies.txt veya Firefox dene.",
+    "cookieLocked": "Tarayıcı çerezleri kilitli. Tarayıcıyı kapat ya da dışa aktarılmış cookies.txt seç.",
+    "cookieAge": "Yaşı doğrulanmış hesabınla oturum açıp o oturumdan yeni cookies.txt seç.",
+    "cookieLogin": "Site geçerli oturum istiyor. Kendi hesabından yeni cookies.txt seç.",
+    "cookieOrOptionsInvalid": "Biçim ve çerez seçimini kontrol et; gerekirse çerez dosyasını yeniden yükle.",
+    "downloadFolderError": "Seçili indirme klasörüne yazılamıyor.",
+    "audioAuto": "Otomatik",
+    "appClosed": "Aevum kapanıyor. Devam etmek için yeniden aç.",
+    "cookieNoneHint": "Oturum veya yaş doğrulaması gereken içerikler için önce bir tarayıcı seç.",
+    "cookieBrowserHint": "{browser}: düğme çerezleri otomatik almayı dener. Başarısız olursa bu tarayıcıdan bir çerez dışa aktarma eklentisiyle Netscape biçiminde kaydettiğin cookies.txt dosyasını seç; {database} veritabanını değil. cookies.txt profil klasöründe hazır bulunmaz.",
+    "cookieAutoLoaded": "✓ Tarayıcı çerezleri alındı",
+    "cookieAutoWorking": "Tarayıcı çerezleri alınıyor…",
+    "cookieManualSelect": "cookies.txt seç",
+    "cookieAutoFailed": "Çerezler otomatik alınamadı. Dışa aktarılmış cookies.txt seç.",
+    "cookieAutoTimeout": "Çerez okuma zaman aşımına uğradı. Dışa aktarılmış cookies.txt seç.",
+    "cookieAutoEmpty": "Geçerli süreli çerez bulunamadı. Oturum aç veya yeni cookies.txt seç.",
+    "cookieProfileMissing": "Tarayıcının çerez profili bulunamadı. Dışa aktarılmış cookies.txt seç.",
+    "cookieMaintenance": "Güncelleme sürüyor. Bekle veya dışa aktarılmış cookies.txt seç."
+  },
+  "es": {
+    "audioOriginal": "Original",
+    "audioVbr": "Mejor VBR",
+    "cookieLoad": "Obtener cookies del navegador",
+    "cookieLoaded": "✓ Cookies cargadas",
+    "cookieClear": "Quitar cookies cargadas",
+    "cookiesHint": "Solo para inicio de sesión o edad. Usa el navegador o un archivo Netscape cookies.txt exportado, no su base de datos.",
+    "audioHint": "La tasa de bits es un objetivo de codificación, no la calidad de origen. El audio compatible puede copiarse.",
+    "audioOriginalHint": "Conserva el audio disponible; el formato y la calidad dependen del origen. Los límites del clip pueden ser aproximados.",
+    "audioLosslessHint": "La salida sin pérdida no recupera detalles que faltan en el origen.",
+    "coverSidecar": "Original / WAV: la portada se guarda como JPG independiente.",
+    "cookieChooseBrowser": "Selecciona primero un navegador.",
+    "cookieInvalid": "Selecciona un archivo cookies.txt exportado en formato Netscape válido.",
+    "cookieDatabase": "Es una base de datos del navegador. Selecciona un archivo Netscape cookies.txt exportado.",
+    "cookieEmpty": "El archivo no contiene cookies.",
+    "cookieExpired": "Todas las cookies han caducado. Inicia sesión y exporta un archivo nuevo.",
+    "cookieTooLarge": "El archivo de cookies debe tener como máximo 2 MiB.",
+    "cookieUnreadable": "No se pudo leer el archivo de cookies.",
+    "cookieStale": "Las cookies manuales ya no están disponibles para este navegador. Selecciona el archivo de nuevo.",
+    "cookieLimit": "Demasiadas importaciones en esta sesión. Elimina una que no uses o reinicia Aevum.",
+    "cookieBusy": "Hay otra operación de cookies en curso.",
+    "cookieFolderMissing": "No se encontró la carpeta del perfil; se abrió el selector normal.",
+    "cookiePickerFallback": "Pulsa de nuevo el botón de archivo para elegir cookies.txt.",
+    "cookieWorking": "Seleccionando cookies…",
+    "cookieDecrypt": "No se pudieron descifrar las cookies del navegador. Prueba un cookies.txt exportado o Firefox.",
+    "cookieLocked": "Las cookies están bloqueadas. Cierra el navegador o selecciona un cookies.txt exportado.",
+    "cookieAge": "Inicia sesión con una cuenta con edad verificada y selecciona un cookies.txt nuevo de esa sesión.",
+    "cookieLogin": "Este sitio necesita una sesión válida. Selecciona un cookies.txt nuevo de tu propia cuenta.",
+    "cookieOrOptionsInvalid": "Revisa el formato y las cookies; vuelve a cargar el archivo si es necesario.",
+    "downloadFolderError": "No se puede escribir en la carpeta de descarga seleccionada.",
+    "audioAuto": "Automático",
+    "appClosed": "Aevum se está cerrando. Ábrelo de nuevo para continuar.",
+    "cookieNoneHint": "Selecciona un navegador para contenido que requiera inicio de sesión o verificación de edad.",
+    "cookieBrowserHint": "{browser}: el botón intenta obtener las cookies automáticamente. Si falla, elige cookies.txt exportado desde este navegador en formato Netscape con una extensión de exportación, no la base de datos {database}. cookies.txt no es un archivo incluido en el perfil.",
+    "cookieAutoLoaded": "✓ Cookies del navegador cargadas",
+    "cookieAutoWorking": "Leyendo cookies del navegador…",
+    "cookieManualSelect": "Elegir cookies.txt",
+    "cookieAutoFailed": "No se pudieron obtener las cookies automáticamente. Elige un cookies.txt exportado.",
+    "cookieAutoTimeout": "Se agotó el tiempo de lectura. Elige un cookies.txt exportado.",
+    "cookieAutoEmpty": "No hay cookies vigentes. Inicia sesión o elige un cookies.txt nuevo.",
+    "cookieProfileMissing": "No se encontró el perfil de cookies. Elige un cookies.txt exportado.",
+    "cookieMaintenance": "Hay una actualización en curso. Espera o elige un cookies.txt exportado."
+  },
+  "de": {
+    "audioOriginal": "Original",
+    "audioVbr": "Beste VBR",
+    "cookieLoad": "Browser-Cookies abrufen",
+    "cookieLoaded": "✓ Cookies geladen",
+    "cookieClear": "Geladene Cookies entfernen",
+    "cookiesHint": "Nur für Anmeldung oder Altersprüfung. Browser-Sitzung oder exportierte Netscape cookies.txt verwenden, keine Browser-Datenbank.",
+    "audioHint": "Die Bitrate ist ein Kodierungsziel, keine Angabe zur Quellqualität. Kompatibles Audio kann kopiert werden.",
+    "audioOriginalHint": "Behält den verfügbaren Audiostream; Format und Qualität hängen von der Quelle ab. Clip-Grenzen können ungenau sein.",
+    "audioLosslessHint": "Verlustfreie Ausgabe stellt keine Details wieder her, die in der Quelle fehlen.",
+    "coverSidecar": "Original / WAV: Das Cover wird als separate JPG-Datei gespeichert.",
+    "cookieChooseBrowser": "Wähle zuerst einen Browser.",
+    "cookieInvalid": "Wähle eine gültige exportierte cookies.txt im Netscape-Format.",
+    "cookieDatabase": "Das ist eine Browser-Datenbank. Wähle stattdessen eine exportierte Netscape cookies.txt.",
+    "cookieEmpty": "Diese Datei enthält keine Cookies.",
+    "cookieExpired": "Alle Cookies sind abgelaufen. Melde dich an und exportiere eine neue Datei.",
+    "cookieTooLarge": "Die Cookie-Datei darf höchstens 2 MiB groß sein.",
+    "cookieUnreadable": "Die Cookie-Datei konnte nicht gelesen werden.",
+    "cookieStale": "Manuelle Cookies sind für diesen Browser nicht mehr verfügbar. Wähle die Datei erneut.",
+    "cookieLimit": "Zu viele Importe in dieser Sitzung. Entferne einen ungenutzten Import oder starte Aevum neu.",
+    "cookieBusy": "Ein anderer Cookie-Vorgang läuft bereits.",
+    "cookieFolderMissing": "Browser-Profilordner nicht gefunden; der normale Dateidialog wurde geöffnet.",
+    "cookiePickerFallback": "Klicke erneut auf die Dateischaltfläche, um cookies.txt auszuwählen.",
+    "cookieWorking": "Cookies werden ausgewählt…",
+    "cookieDecrypt": "Browser-Cookies konnten nicht entschlüsselt werden. Versuche eine exportierte cookies.txt oder Firefox.",
+    "cookieLocked": "Browser-Cookies sind gesperrt. Schließe den Browser oder wähle eine exportierte cookies.txt.",
+    "cookieAge": "Melde dich mit einem altersbestätigten Konto an und wähle eine neue cookies.txt aus dieser Sitzung.",
+    "cookieLogin": "Diese Seite benötigt eine gültige Anmeldung. Wähle eine neue cookies.txt deines eigenen Kontos.",
+    "cookieOrOptionsInvalid": "Prüfe Format und Cookies; lade die Cookie-Datei bei Bedarf erneut.",
+    "downloadFolderError": "In den ausgewählten Downloadordner kann nicht geschrieben werden.",
+    "audioAuto": "Automatisch",
+    "appClosed": "Aevum wird geschlossen. Öffne es erneut, um fortzufahren.",
+    "cookieNoneHint": "Wähle einen Browser für Inhalte mit Anmeldung oder Altersprüfung.",
+    "cookieBrowserHint": "{browser}: Die Schaltfläche versucht, Cookies automatisch zu lesen. Falls das scheitert, wähle eine mit einer Cookie-Export-Erweiterung aus diesem Browser im Netscape-Format exportierte cookies.txt, nicht die Datenbank {database}. cookies.txt ist keine vorinstallierte Profildatei.",
+    "cookieAutoLoaded": "✓ Browser-Cookies geladen",
+    "cookieAutoWorking": "Browser-Cookies werden gelesen…",
+    "cookieManualSelect": "cookies.txt wählen",
+    "cookieAutoFailed": "Cookies konnten nicht automatisch gelesen werden. Wähle eine exportierte cookies.txt.",
+    "cookieAutoTimeout": "Zeitüberschreitung beim Lesen. Wähle eine exportierte cookies.txt.",
+    "cookieAutoEmpty": "Keine gültigen Cookies gefunden. Melde dich an oder wähle eine neue cookies.txt.",
+    "cookieProfileMissing": "Cookie-Profil nicht gefunden. Wähle eine exportierte cookies.txt.",
+    "cookieMaintenance": "Ein Update läuft. Warte oder wähle eine exportierte cookies.txt."
+  },
+  "fr": {
+    "audioOriginal": "Original",
+    "audioVbr": "Meilleur VBR",
+    "cookieLoad": "Récupérer les cookies du navigateur",
+    "cookieLoaded": "✓ Cookies chargés",
+    "cookieClear": "Retirer les cookies chargés",
+    "cookiesHint": "Pour connexion ou âge : session du navigateur ou fichier Netscape cookies.txt exporté, pas la base du navigateur.",
+    "audioHint": "Le débit est une cible d’encodage, pas la qualité de la source. L’audio compatible peut être copié.",
+    "audioOriginalHint": "Conserve le flux audio disponible ; format et qualité dépendent de la source. Les limites du clip peuvent être approximatives.",
+    "audioLosslessHint": "Une sortie sans perte ne restitue pas les détails absents de la source.",
+    "coverSidecar": "Original / WAV : la pochette est enregistrée dans un JPG séparé.",
+    "cookieChooseBrowser": "Choisis d’abord un navigateur.",
+    "cookieInvalid": "Choisis un fichier cookies.txt valide exporté au format Netscape.",
+    "cookieDatabase": "C’est une base de données du navigateur. Choisis plutôt un fichier Netscape cookies.txt exporté.",
+    "cookieEmpty": "Ce fichier ne contient aucun cookie.",
+    "cookieExpired": "Tous les cookies ont expiré. Connecte-toi et exporte un nouveau fichier.",
+    "cookieTooLarge": "Le fichier de cookies ne doit pas dépasser 2 Mio.",
+    "cookieUnreadable": "Impossible de lire le fichier de cookies.",
+    "cookieStale": "Les cookies manuels ne sont plus disponibles pour ce navigateur. Sélectionne à nouveau le fichier.",
+    "cookieLimit": "Trop d’importations dans cette session. Retire une importation inutilisée ou redémarre Aevum.",
+    "cookieBusy": "Une autre opération sur les cookies est en cours.",
+    "cookieFolderMissing": "Dossier du profil introuvable ; le sélecteur de fichiers normal a été ouvert.",
+    "cookiePickerFallback": "Clique à nouveau sur le bouton de fichier pour choisir cookies.txt.",
+    "cookieWorking": "Sélection des cookies…",
+    "cookieDecrypt": "Impossible de déchiffrer les cookies du navigateur. Essaie un cookies.txt exporté ou Firefox.",
+    "cookieLocked": "Les cookies sont verrouillés. Ferme le navigateur ou choisis un cookies.txt exporté.",
+    "cookieAge": "Connecte-toi avec un compte dont l’âge est vérifié, puis choisis un cookies.txt récent de cette session.",
+    "cookieLogin": "Ce site exige une session valide. Choisis un cookies.txt récent de ton propre compte.",
+    "cookieOrOptionsInvalid": "Vérifie le format et les cookies ; recharge le fichier si nécessaire.",
+    "downloadFolderError": "Impossible d’écrire dans le dossier de téléchargement choisi.",
+    "audioAuto": "Auto",
+    "appClosed": "Aevum se ferme. Rouvre-le pour continuer.",
+    "cookieNoneHint": "Choisis un navigateur pour les contenus exigeant une connexion ou une vérification d’âge.",
+    "cookieBrowserHint": "{browser} : le bouton tente de récupérer les cookies automatiquement. En cas d’échec, choisis cookies.txt exporté de ce navigateur au format Netscape avec une extension d’exportation, pas la base {database}. cookies.txt n’est pas un fichier fourni dans le profil.",
+    "cookieAutoLoaded": "✓ Cookies du navigateur récupérés",
+    "cookieAutoWorking": "Lecture des cookies du navigateur…",
+    "cookieManualSelect": "Choisir cookies.txt",
+    "cookieAutoFailed": "Récupération automatique impossible. Choisis un cookies.txt exporté.",
+    "cookieAutoTimeout": "Délai de lecture dépassé. Choisis un cookies.txt exporté.",
+    "cookieAutoEmpty": "Aucun cookie non expiré. Connecte-toi ou choisis un cookies.txt récent.",
+    "cookieProfileMissing": "Profil de cookies introuvable. Choisis un cookies.txt exporté.",
+    "cookieMaintenance": "Une mise à jour est en cours. Patiente ou choisis un cookies.txt exporté."
+  },
+  "it": {
+    "audioOriginal": "Originale",
+    "audioVbr": "VBR migliore",
+    "cookieLoad": "Recupera cookie dal browser",
+    "cookieLoaded": "✓ Cookie caricati",
+    "cookieClear": "Rimuovi cookie caricati",
+    "cookiesHint": "Solo per accesso o verifica età: sessione del browser o Netscape cookies.txt esportato, non il database del browser.",
+    "audioHint": "Il bitrate è un obiettivo di codifica, non la qualità della sorgente. L’audio compatibile può essere copiato.",
+    "audioOriginalHint": "Conserva il flusso audio disponibile; formato e qualità dipendono dalla sorgente. I limiti della clip possono essere approssimativi.",
+    "audioLosslessHint": "L’uscita senza perdita non recupera i dettagli assenti nella sorgente.",
+    "coverSidecar": "Originale / WAV: la copertina viene salvata come JPG separato.",
+    "cookieChooseBrowser": "Seleziona prima un browser.",
+    "cookieInvalid": "Seleziona un file cookies.txt valido esportato in formato Netscape.",
+    "cookieDatabase": "Questo è un database del browser. Seleziona invece un file Netscape cookies.txt esportato.",
+    "cookieEmpty": "Il file non contiene cookie.",
+    "cookieExpired": "Tutti i cookie sono scaduti. Accedi ed esporta un nuovo file.",
+    "cookieTooLarge": "Il file dei cookie non deve superare 2 MiB.",
+    "cookieUnreadable": "Impossibile leggere il file dei cookie.",
+    "cookieStale": "I cookie manuali non sono più disponibili per questo browser. Seleziona nuovamente il file.",
+    "cookieLimit": "Troppe importazioni in questa sessione. Rimuovine una inutilizzata o riavvia Aevum.",
+    "cookieBusy": "È in corso un’altra operazione sui cookie.",
+    "cookieFolderMissing": "Cartella del profilo non trovata; è stata aperta la normale finestra di selezione.",
+    "cookiePickerFallback": "Premi di nuovo il pulsante del file per scegliere cookies.txt.",
+    "cookieWorking": "Selezione dei cookie…",
+    "cookieDecrypt": "Impossibile decifrare i cookie del browser. Prova un cookies.txt esportato o Firefox.",
+    "cookieLocked": "I cookie sono bloccati. Chiudi il browser o seleziona un cookies.txt esportato.",
+    "cookieAge": "Accedi con un account con età verificata e seleziona un cookies.txt aggiornato di quella sessione.",
+    "cookieLogin": "Il sito richiede una sessione valida. Seleziona un cookies.txt aggiornato del tuo account.",
+    "cookieOrOptionsInvalid": "Controlla formato e cookie; ricarica il file se necessario.",
+    "downloadFolderError": "Impossibile scrivere nella cartella di download selezionata.",
+    "audioAuto": "Automatico",
+    "appClosed": "Aevum si sta chiudendo. Riaprilo per continuare.",
+    "cookieNoneHint": "Seleziona un browser per i contenuti che richiedono accesso o verifica dell’età.",
+    "cookieBrowserHint": "{browser}: il pulsante prova a leggere i cookie automaticamente. Se non riesce, scegli cookies.txt esportato da questo browser in formato Netscape con un’estensione di esportazione, non il database {database}. cookies.txt non è un file già presente nel profilo.",
+    "cookieAutoLoaded": "✓ Cookie del browser recuperati",
+    "cookieAutoWorking": "Lettura dei cookie del browser…",
+    "cookieManualSelect": "Scegli cookies.txt",
+    "cookieAutoFailed": "Recupero automatico non riuscito. Scegli un cookies.txt esportato.",
+    "cookieAutoTimeout": "Tempo di lettura scaduto. Scegli un cookies.txt esportato.",
+    "cookieAutoEmpty": "Nessun cookie valido trovato. Accedi o scegli un cookies.txt aggiornato.",
+    "cookieProfileMissing": "Profilo dei cookie non trovato. Scegli un cookies.txt esportato.",
+    "cookieMaintenance": "Aggiornamento in corso. Attendi o scegli un cookies.txt esportato."
+  },
+  "pt": {
+    "audioOriginal": "Original",
+    "audioVbr": "Melhor VBR",
+    "cookieLoad": "Obter cookies do navegador",
+    "cookieLoaded": "✓ Cookies carregados",
+    "cookieClear": "Remover cookies carregados",
+    "cookiesHint": "Para login ou idade: sessão do navegador ou Netscape cookies.txt exportado, não o banco de dados do navegador.",
+    "audioHint": "A taxa de bits é uma meta de codificação, não a qualidade da fonte. Áudio compatível pode ser copiado.",
+    "audioOriginalHint": "Preserva o fluxo de áudio disponível; formato e qualidade dependem da fonte. Os limites do clipe podem ser aproximados.",
+    "audioLosslessHint": "A saída sem perdas não recupera detalhes ausentes na fonte.",
+    "coverSidecar": "Original / WAV: a capa é salva como JPG separado.",
+    "cookieChooseBrowser": "Selecione primeiro um navegador.",
+    "cookieInvalid": "Selecione um cookies.txt válido exportado no formato Netscape.",
+    "cookieDatabase": "Este é um banco de dados do navegador. Selecione um Netscape cookies.txt exportado.",
+    "cookieEmpty": "O arquivo não contém cookies.",
+    "cookieExpired": "Todos os cookies expiraram. Entre na conta e exporte um novo arquivo.",
+    "cookieTooLarge": "O arquivo de cookies deve ter no máximo 2 MiB.",
+    "cookieUnreadable": "Não foi possível ler o arquivo de cookies.",
+    "cookieStale": "Os cookies manuais não estão mais disponíveis para este navegador. Selecione o arquivo novamente.",
+    "cookieLimit": "Muitas importações nesta sessão. Remova uma que não usa ou reinicie o Aevum.",
+    "cookieBusy": "Outra operação de cookies está em andamento.",
+    "cookieFolderMissing": "Pasta do perfil não encontrada; o seletor de arquivos padrão foi aberto.",
+    "cookiePickerFallback": "Clique novamente no botão de arquivo para escolher cookies.txt.",
+    "cookieWorking": "Selecionando cookies…",
+    "cookieDecrypt": "Não foi possível descriptografar os cookies do navegador. Tente um cookies.txt exportado ou o Firefox.",
+    "cookieLocked": "Os cookies estão bloqueados. Feche o navegador ou selecione um cookies.txt exportado.",
+    "cookieAge": "Entre com uma conta com idade verificada e selecione um cookies.txt novo dessa sessão.",
+    "cookieLogin": "O site precisa de uma sessão válida. Selecione um cookies.txt novo da sua própria conta.",
+    "cookieOrOptionsInvalid": "Verifique o formato e os cookies; carregue o arquivo novamente se necessário.",
+    "downloadFolderError": "Não é possível gravar na pasta de download selecionada.",
+    "audioAuto": "Automático",
+    "appClosed": "O Aevum está fechando. Abra-o novamente para continuar.",
+    "cookieNoneHint": "Selecione um navegador para conteúdo que exija login ou verificação de idade.",
+    "cookieBrowserHint": "{browser}: o botão tenta obter os cookies automaticamente. Se falhar, escolha cookies.txt exportado deste navegador no formato Netscape com uma extensão de exportação, não o banco {database}. cookies.txt não é um arquivo incluído no perfil.",
+    "cookieAutoLoaded": "✓ Cookies do navegador obtidos",
+    "cookieAutoWorking": "Lendo cookies do navegador…",
+    "cookieManualSelect": "Escolher cookies.txt",
+    "cookieAutoFailed": "Não foi possível obter os cookies automaticamente. Escolha um cookies.txt exportado.",
+    "cookieAutoTimeout": "O tempo de leitura expirou. Escolha um cookies.txt exportado.",
+    "cookieAutoEmpty": "Nenhum cookie válido encontrado. Entre na conta ou escolha um cookies.txt novo.",
+    "cookieProfileMissing": "Perfil de cookies não encontrado. Escolha um cookies.txt exportado.",
+    "cookieMaintenance": "Uma atualização está em andamento. Aguarde ou escolha um cookies.txt exportado."
+  },
+  "ru": {
+    "audioOriginal": "Оригинал",
+    "audioVbr": "Лучший VBR",
+    "cookieLoad": "Получить cookies браузера",
+    "cookieLoaded": "✓ Cookies загружены",
+    "cookieClear": "Удалить загруженные cookies",
+    "cookiesHint": "Для входа или проверки возраста: сеанс браузера или экспорт Netscape cookies.txt, не база данных браузера.",
+    "audioHint": "Битрейт — цель кодирования, а не качество источника. Совместимое аудио может копироваться без перекодирования.",
+    "audioOriginalHint": "Сохраняет доступный аудиопоток; формат и качество зависят от источника. Границы клипа могут быть приблизительными.",
+    "audioLosslessHint": "Формат без потерь не восстановит детали, отсутствующие в источнике.",
+    "coverSidecar": "Оригинал / WAV: обложка сохраняется отдельным JPG.",
+    "cookieChooseBrowser": "Сначала выберите браузер.",
+    "cookieInvalid": "Выберите корректный файл cookies.txt, экспортированный в формате Netscape.",
+    "cookieDatabase": "Это база данных браузера. Выберите экспортированный Netscape cookies.txt.",
+    "cookieEmpty": "В файле нет cookies.",
+    "cookieExpired": "Срок действия всех cookies истёк. Войдите в аккаунт и экспортируйте новый файл.",
+    "cookieTooLarge": "Размер файла cookies не должен превышать 2 МиБ.",
+    "cookieUnreadable": "Не удалось прочитать файл cookies.",
+    "cookieStale": "Загруженные cookies больше недоступны для этого браузера. Выберите файл заново.",
+    "cookieLimit": "Слишком много импортов за сеанс. Удалите ненужный импорт или перезапустите Aevum.",
+    "cookieBusy": "Уже выполняется другая операция с cookies.",
+    "cookieFolderMissing": "Папка профиля не найдена; открыто обычное окно выбора файла.",
+    "cookiePickerFallback": "Нажмите кнопку файла ещё раз, чтобы выбрать cookies.txt.",
+    "cookieWorking": "Выбор cookies…",
+    "cookieDecrypt": "Не удалось расшифровать cookies браузера. Попробуйте экспортированный cookies.txt или Firefox.",
+    "cookieLocked": "Cookies заблокированы. Закройте браузер или выберите экспортированный cookies.txt.",
+    "cookieAge": "Войдите в аккаунт с подтверждённым возрастом и выберите свежий cookies.txt этого сеанса.",
+    "cookieLogin": "Сайту нужен действительный сеанс входа. Выберите свежий cookies.txt своего аккаунта.",
+    "cookieOrOptionsInvalid": "Проверьте формат и cookies; при необходимости загрузите файл заново.",
+    "downloadFolderError": "Не удалось записать в выбранную папку загрузки.",
+    "audioAuto": "Авто",
+    "appClosed": "Aevum закрывается. Откройте приложение снова, чтобы продолжить.",
+    "cookieNoneHint": "Выберите браузер для контента, требующего входа или проверки возраста.",
+    "cookieBrowserHint": "{browser}: кнопка пытается получить cookies автоматически. При неудаче выберите cookies.txt, экспортированный из этого браузера в формате Netscape с помощью расширения для экспорта, а не базу {database}. cookies.txt не является встроенным файлом профиля.",
+    "cookieAutoLoaded": "✓ Cookies браузера получены",
+    "cookieAutoWorking": "Чтение cookies браузера…",
+    "cookieManualSelect": "Выбрать cookies.txt",
+    "cookieAutoFailed": "Не удалось получить cookies автоматически. Выберите экспортированный cookies.txt.",
+    "cookieAutoTimeout": "Время чтения истекло. Выберите экспортированный cookies.txt.",
+    "cookieAutoEmpty": "Не найдено действующих cookies. Войдите в аккаунт или выберите свежий cookies.txt.",
+    "cookieProfileMissing": "Профиль cookies не найден. Выберите экспортированный cookies.txt.",
+    "cookieMaintenance": "Идёт обновление. Подождите или выберите экспортированный cookies.txt."
+  }
+};
+for(const [lang,words] of Object.entries(EXTRA_TEXT))Object.assign(I18N[lang],words);
 const LANGS=[['en','English'],['tr','Türkçe'],['es','Español'],['de','Deutsch'],['fr','Français'],['it','Italiano'],['pt','Português'],['ru','Русский']];
 const langMenu=document.getElementById('langMenu'),langCode=document.getElementById('langCode'),langbox=document.getElementById('langbox');
 let curLang=localStorage.getItem('vdl_lang')||'en';
 function T(k){const L=I18N[curLang]||I18N.en;return L[k]!==undefined?L[k]:(I18N.en[k]!==undefined?I18N.en[k]:k);}
 function renderTexts(){document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=T(el.dataset.i18n);});document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.placeholder=T(el.dataset.i18nPh);});document.querySelectorAll('[data-i18n-title]').forEach(el=>{el.title=T(el.dataset.i18nTitle);});}
 function buildLangMenu(){langMenu.innerHTML=LANGS.map(([c,n])=>'<button class="lang-opt'+(c===curLang?' active':'')+'" data-lang="'+c+'" onclick="selectLang(\\''+c+'\\')"><span>'+n+'</span><span class="lc">'+c.toUpperCase()+'</span></button>').join('');}
-function applyLang(l){curLang=l;localStorage.setItem('vdl_lang',l);document.documentElement.lang=l;langCode.textContent=l.toUpperCase();renderTexts();updateNote();buildLangMenu();buildThemeMenu();renderSettings();renderInfo();}
+function applyLang(l){curLang=l;localStorage.setItem('vdl_lang',l);document.documentElement.lang=l;langCode.textContent=l.toUpperCase();renderTexts();updateNote();buildLangMenu();buildThemeMenu();renderSettings();renderInfo();renderCookies();renderAudio();}
 function selectLang(l){applyLang(l);saveCfg({lang:l});closeLangMenu();}
 function toggleLangMenu(e){e.stopPropagation();langMenu.classList.toggle('open');}
 function closeLangMenu(){langMenu.classList.remove('open');}
 document.addEventListener('click',e=>{if(langbox&&!langbox.contains(e.target))closeLangMenu();});
-function statusText(d){const tag=d.item?'['+d.item+'] ':'';const spd=d.speed?' · '+d.speed+' MB/s':'';const tot=d.total?' · '+d.total:'';const eta=d.eta?' · ETA '+d.eta:'';const det=tot+spd+eta;switch(d.code){case 'queued':return T('queued');case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%'+det;case 'clip':return (d.progress>0?T('downloading')+' '+d.progress+'%'+det:T('clipDownloading'));case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed')+(d.subswarn?' — '+T('subsSkipped'):'');case 'stopped':return T('stopped');case 'error':return d.cookieerr?T('cookiesLocked'):d.formaterr?T('formatMissing'):d.staleerr?T('siteChanged'):(d.error_line?d.error_line.slice(0,110):T('errorGeneric'));default:return '';}}
+function statusText(d){const tag=d.item?'['+d.item+'] ':'';const spd=d.speed?' · '+d.speed+' MB/s':'';const tot=d.total?' · '+d.total:'';const eta=d.eta?' · ETA '+d.eta:'';const det=tot+spd+eta;switch(d.code){case 'queued':return T('queued');case 'download':return tag+T('downloading')+' '+(d.progress||0)+'%'+det;case 'clip':return (d.progress>0?T('downloading')+' '+d.progress+'%'+det:T('clipDownloading'));case 'process':return tag+T('processing');case 'start':return T('starting');case 'done':return T('completed')+(d.subswarn?' — '+T('subsSkipped'):'');case 'stopped':return T('stopped');case 'error':return d.autherr?T(d.autherr):d.cookieerr?T('cookiesLocked'):d.formaterr?T('formatMissing'):d.staleerr?T('siteChanged'):(d.error_line?d.error_line.slice(0,110):T('errorGeneric'));default:return '';}}
 // ── info / guide panel ──
 const INFO_TEXT={
  en:{title:'Guide',items:[['Video / Audio','download the full video, or just its sound (e.g. MP3).'],['Quality','best stream up to that height. Dimmed = not offered for this video; hover shows the size.'],['MP4','the most widely accepted container. H.264 where a site offers it, AV1 or VP9 above 1080p.'],['MKV','takes any codec, so it gets whatever the site offers at its best. Good for archiving.'],['H.264','an MP4 that really is H.264 — best for editors. Sites stop making it above 1080p.'],['WebM','VP9 — best quality per megabyte.'],['Subtitles',"embeds the uploader's own subtitles into the file (does not apply to auto captions)."],['Mute','video only, no audio track.'],['Thumbnail','saves the cover as jpg next to the video, in their own folder.'],['Cookies','use your browser login for members-only content (your own account).'],['Playlist','downloads the whole list into a numbered folder.'],['Clip','downloads only the chosen range — frame-exact, at full speed.'],['Lossless cut','no re-encode: original quality, but the clip may start a few seconds early.'],['Version','checks whether a newer Aevum is out and installs it. Where a copy cannot install itself, the button opens the release page instead.'],['Packages','updates yt-dlp, the piece that goes stale when a site changes. Stable when stable is newer, nightly when only that one works; one click puts the bundled copy back.']]},
@@ -944,7 +1319,7 @@ function runProbe(url){
   ptitle.textContent=T('probeLoading');
   pmeta.textContent='';
   pcard.classList.add('show');
-  fetch('/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})})
+  fetch('/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,cookies:state.cookies,cookieToken:state.cookieToken})})
     .then(r=>r.ok?r.json():null)
     .then(d=>{
       if(myProbe!==probeSeq)return;
@@ -973,7 +1348,7 @@ function runProbe(url){
 let justPasted=false;
 inp.addEventListener('paste',()=>{justPasted=true;});
 inp.addEventListener('input',()=>{
-  gb.disabled=!inp.value.trim();updateNote();
+  gb.disabled=downloadPending||!inp.value.trim();++probeSeq;updateNote();
   hideCard();
   // A new link means a new video — yesterday's clip range would silently
   // cut the wrong section, so the clip fields reset. Other options stay:
@@ -1017,16 +1392,122 @@ function h264Note(){
   else want=+QMAP[state.vq]||0;
   return (want&&want>cap)?T('h264Cap').replace('{h}',cap):'';
 }
-function pick(btn){const g=btn.dataset.g;state[g]=btn.dataset.v;document.querySelectorAll('[data-g="'+g+'"]').forEach(b=>b.classList.remove('on','mode-on'));btn.classList.add(g==='mode'?'mode-on':'on');btn.classList.remove('pop');void btn.offsetWidth;btn.classList.add('pop');updateNote();}
-function toggleFlag(key,btn){state[key]=!state[key];btn.classList.toggle('tog-on',state[key]);btn.classList.remove('pop');void btn.offsetWidth;btn.classList.add('pop');if(key==='playlist')updateNote();}
-function setMode(m){const vr=document.getElementById('vrows'),ar=document.getElementById('arows');if(m==='audio'){requestAnimationFrame(()=>{vr.classList.add('hide');vr.style.maxHeight='0'});ar.classList.remove('hide');ar.style.maxHeight='200px';ar.style.opacity='1';}else{requestAnimationFrame(()=>{ar.classList.add('hide');ar.style.maxHeight='0'});vr.classList.remove('hide');vr.style.maxHeight='240px';vr.style.opacity='1';}
+function pick(btn){const g=btn.dataset.g;if(g==='cookies'&&state.cookies!==btn.dataset.v)clearCookie(false);state[g]=btn.dataset.v;document.querySelectorAll('[data-g="'+g+'"]').forEach(b=>b.classList.remove('on','mode-on'));btn.classList.add(g==='mode'?'mode-on':'on');btn.classList.remove('pop');void btn.offsetWidth;btn.classList.add('pop');updateNote();if(g==='cookies'){renderCookies();authChanged();}if(g==='fmt')renderAudio();}
+function toggleFlag(key,btn){state[key]=!state[key];btn.classList.toggle('tog-on',state[key]);btn.classList.remove('pop');void btn.offsetWidth;btn.classList.add('pop');if(key==='playlist')updateNote();if(key==='thumb'){document.querySelectorAll('[data-flag="thumb"]').forEach(b=>b.classList.toggle('tog-on',state.thumb));renderAudio();}}
+function setMode(m){const vr=document.getElementById('vrows'),ar=document.getElementById('arows');if(m==='audio'){requestAnimationFrame(()=>{vr.classList.add('hide');vr.style.maxHeight='0'});ar.classList.remove('hide');ar.style.maxHeight='300px';ar.style.opacity='1';}else{requestAnimationFrame(()=>{ar.classList.add('hide');ar.style.maxHeight='0'});vr.classList.remove('hide');vr.style.maxHeight='240px';vr.style.opacity='1';}
   // Audio clips are always cut exactly (re-encode is free there), so the
   // lossless toggle would be a dead control — hide it in audio mode
   document.getElementById('clipllbtn').style.display=(m==='audio')?'none':'';}
+
+let cookieEpoch=0,cookieBusy=false,cookieMessage='',cookieNative=false,pendingCookie=null;
+let cookieManualReady=false,cookieAutomatic=false,cookiePhase='cookieWorking';
+const cookieFile=document.getElementById('cookieFile');
+function forgetCookie(token){if(token)fetch('/cookies/remove',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({token})}).catch(()=>{});}
+function renderCookies(){
+  const button=document.getElementById('cookieLoad'),feedback=document.getElementById('cookieFeedback');
+  button.disabled=state.cookies==='none'||cookieBusy;button.setAttribute('aria-label',T('cookieLoad'));
+  const names={chrome:'Chrome',edge:'Edge',firefox:'Firefox',brave:'Brave',zen:'Zen'};
+  const database=['firefox','zen'].includes(state.cookies)?'cookies.sqlite':'Cookies';
+  document.getElementById('cookiesHint').textContent=state.cookies==='none'?T('cookieNoneHint'):
+    T('cookieBrowserHint').replace('{browser}',names[state.cookies]||state.cookies).replace('{database}',database);
+  feedback.replaceChildren();
+  if(state.cookieToken){
+    const status=document.createElement('span');status.className='cookie-status';status.textContent=T(cookieAutomatic?'cookieAutoLoaded':'cookieLoaded');feedback.append(status);
+    const reset=document.createElement('button');reset.className='cookie-reset';reset.textContent='×';reset.title=T('cookieClear');reset.setAttribute('aria-label',T('cookieClear'));reset.onclick=()=>clearCookie();feedback.append(reset);
+  }
+  if(cookieBusy||cookieMessage){const msg=document.createElement('span');msg.className='cookie-warning';msg.textContent=(state.cookieToken?' · ':'')+(cookieMessage?T(cookieMessage):'')+(cookieBusy?(cookieMessage?' ':'')+T(cookiePhase):'');feedback.append(msg);}
+  if(cookieManualReady){const manual=document.createElement('button');manual.className='cookie-reset';manual.textContent=T('cookieManualSelect');manual.disabled=cookieBusy;manual.onclick=()=>chooseManualCookies(state.cookies,cookieEpoch);feedback.append(manual);}
+}
+function renderAudio(){
+  const fmt=state.fmt,original=fmt==='original',lossless=fmt==='wav'||fmt==='flac';
+  const high=document.querySelector('[data-g="br"][data-v="320k"],[data-g="br"][data-v="256k"]');
+  const maxBitrate=fmt==='opus'?'256k':'320k';
+  if(state.br==='320k'||state.br==='256k')state.br=maxBitrate;
+  high.dataset.v=maxBitrate;high.textContent=maxBitrate;
+  document.querySelector('[data-g="br"][data-v="best"]').textContent=fmt==='opus'?T('audioAuto'):T('audioVbr');
+  document.querySelectorAll('[data-g="br"]').forEach(b=>b.classList.toggle('on',b.dataset.v===state.br));
+  document.getElementById('bitrateRow').style.display=original||lossless?'none':'';
+  document.getElementById('audioHint').textContent=T(original?'audioOriginalHint':lossless?'audioLosslessHint':'audioHint')+(state.thumb&&(original||fmt==='wav')?' '+T('coverSidecar'):'');
+}
+function authChanged(){
+  ++probeSeq;if(probeTimer)clearTimeout(probeTimer);hideCard();
+  const url=inp.value.trim();if(url&&url.includes('.'))probeTimer=setTimeout(()=>runProbe(url),0);
+}
+function clearCookie(refresh=true){
+  ++cookieEpoch;forgetCookie(state.cookieToken);state.cookieToken='';cookieMessage='';
+  cookieManualReady=false;cookieAutomatic=false;
+  renderCookies();if(refresh)authChanged();
+}
+function acceptCookie(result,browser,epoch){
+  if(epoch!==cookieEpoch||browser!==state.cookies){forgetCookie(result.token);return;}
+  if(result.error){cookieMessage=result.error;return;}
+  if(result.cancelled){cookieMessage=result.warning||cookieMessage;return;}
+  if(result.token){const old=state.cookieToken;state.cookieToken=result.token;forgetCookie(old);cookieMessage=result.warning||'';cookieAutomatic=!!result.automatic;cookieManualReady=false;authChanged();}
+}
+function openCookieInput(browser,epoch){
+  pendingCookie={browser,epoch};cookieFile.value='';cookieFile.click();
+}
+async function chooseManualCookies(browser,epoch){
+  if(cookieBusy||epoch!==cookieEpoch||browser!==state.cookies||browser==='none')return;
+  if(!cookieNative){openCookieInput(browser,epoch);return;}
+  cookieBusy=true;cookiePhase='cookieWorking';renderCookies();
+  try{
+    const response=await fetch('/cookies/select',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({browser,lang:curLang,exported:true})});
+    const result=await response.json();
+    if(result.fallback&&epoch===cookieEpoch&&browser===state.cookies){cookieNative=false;openCookieInput(browser,epoch);}
+    else acceptCookie(result,browser,epoch);
+  }catch(e){if(epoch===cookieEpoch&&browser===state.cookies)cookieMessage='connError';}
+  finally{cookieBusy=false;renderCookies();}
+}
+async function loadCookie(){
+  if(cookieBusy||state.cookies==='none')return;
+  const browser=state.cookies,epoch=++cookieEpoch;
+  cookieBusy=true;cookiePhase='cookieAutoWorking';cookieMessage='';cookieManualReady=false;renderCookies();
+  try{
+    const response=await fetch('/cookies/auto',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({browser})});
+    const result=await response.json();
+    if(epoch!==cookieEpoch||browser!==state.cookies){forgetCookie(result.token);return;}
+    if(result.fallback){
+      cookieMessage=result.error||'cookieAutoFailed';cookieManualReady=true;cookieBusy=false;renderCookies();
+      // Windows can open a native dialog after the request. If a web browser
+      // blocks an async file picker, the small manual button remains clickable.
+      await chooseManualCookies(browser,epoch);
+    }else acceptCookie(result,browser,epoch);
+  }catch(e){if(epoch===cookieEpoch&&browser===state.cookies){cookieMessage='connError';cookieManualReady=true;}}
+  finally{cookieBusy=false;renderCookies();}
+}
+cookieFile.addEventListener('change',async()=>{
+  const file=cookieFile.files[0],selection=pendingCookie;
+  if(!file||!selection||selection.epoch!==cookieEpoch||selection.browser!==state.cookies)return;
+  if(file.size>2097152){cookieMessage='cookieTooLarge';renderCookies();return;}
+  cookieBusy=true;cookiePhase='cookieWorking';renderCookies();
+  try{
+    const response=await fetch('/cookies/upload?browser='+encodeURIComponent(selection.browser),{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Aevum':'1'},body:file});
+    acceptCookie(await response.json(),selection.browser,selection.epoch);
+  }catch(e){if(selection.epoch===cookieEpoch&&selection.browser===state.cookies)cookieMessage='connError';}
+  finally{cookieBusy=false;cookieFile.value='';renderCookies();}
+});
+fetch('/cookies/info').then(r=>r.json()).then(d=>{cookieNative=!!d.native;}).catch(()=>{});
+
 // The link is the bottleneck, so downloads run one at a time. Pressing
 // Download while one is busy adds the next link to the queue instead of
 // being locked out; the panel below shows every entry with its own bar.
-function go(){const url=inp.value.trim();if(!url||gb.disabled)return;const dir=document.getElementById('dir').value.trim();const clipStart=document.getElementById('clipStart').value.trim();const clipEnd=document.getElementById('clipEnd').value.trim();pw.classList.add('show');pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';fetch('/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,...state,dir,clipStart,clipEnd})}).then(r=>r.json()).then(()=>{inp.value='';inp.dispatchEvent(new Event('input'));refresh();}).catch(()=>{pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';});}
+async function go(){
+  const url=inp.value.trim();if(!url||gb.disabled||downloadPending)return;
+  const dir=document.getElementById('dir').value.trim();
+  const clipStart=document.getElementById('clipStart').value.trim(),clipEnd=document.getElementById('clipEnd').value.trim();
+  downloadPending=true;gb.disabled=true;pw.classList.add('show');pt.textContent=T('connecting');pt.style.color='rgba(var(--accent),0.5)';
+  try{
+    const response=await fetch('/download',{method:'POST',headers:{'Content-Type':'application/json','X-Aevum':'1'},body:JSON.stringify({url,...state,dir,clipStart,clipEnd})});
+    const result=await response.json();
+    if(!response.ok||result.error){
+      if(result.error==='cookieStale'){clearCookie(false);cookieMessage='cookieStale';renderCookies();}
+      pt.textContent=T(result.error||'errorGeneric');pt.style.color='rgba(255,100,80,0.8)';return;
+    }
+    if(inp.value.trim()===url){inp.value='';inp.dispatchEvent(new Event('input'));}refresh();
+  }catch(e){pt.textContent=T('connError');pt.style.color='rgba(255,100,80,0.8)';}
+  finally{downloadPending=false;gb.disabled=!inp.value.trim();}
+}
 function cancelJob(){if(!jobId)return;stopbtn.classList.remove('show');pt.textContent=T('stopping');pt.style.color='rgba(255,150,90,0.9)';fetch('/cancel/'+jobId,{method:'POST',headers:{'X-Aevum':'1'}}).then(()=>refresh());}
 // Same endpoint for a job that has not started: the server retires it
 // without a process to kill, so it just leaves the queue.
@@ -1142,6 +1623,7 @@ setInterval(()=>{fetch('/ping?id='+CID,{cache:'no-store'}).then(()=>{pingFails=0
 // announce the tab closing (fast clean exit; after a reload the new page reconnects right away)
 window.addEventListener('pagehide',()=>{try{navigator.sendBeacon('/bye?id='+CID);}catch(e){}});
 // show the settings panel on first launch (once)
+renderCookies();renderAudio();
 if(!localStorage.getItem('aevum_onboarded')){setTimeout(()=>settingsPanel.classList.add('open'),700);localStorage.setItem('aevum_onboarded','1');}
 </script>
 </body>
@@ -1316,11 +1798,29 @@ def _parse_timestamp(text: str):
     return seconds
 
 
-def build_cmd(data: dict, output_dir: str) -> list:
+def _cookie_args(browser, path=''):
+    if browser not in BROWSERS and browser != 'none':
+        raise CookieError('cookieChooseBrowser')
+    if path:
+        return ['--cookies', path]
+    return ['--cookies-from-browser', browser_cookie_source(browser)] if browser != 'none' else []
+
+
+def build_cmd(data: dict, output_dir: str, cookie_path: str = '') -> list:
     url  = normalize_url(data["url"])
     mode = data.get("mode", "video")
     is_playlist = bool(data.get("playlist"))
     want_thumb = bool(data.get("thumb"))
+    afmt = data.get('fmt', 'mp3')
+    br = data.get('br', '192k')
+    source_audio = mode == 'audio' and afmt == 'original'
+    if mode not in ('audio', 'video'):
+        raise ValueError('Unsupported download mode')
+    if mode == 'audio' and (afmt not in ('original', 'mp3', 'm4a', 'opus', 'flac', 'wav')
+                            or br not in ('best', '320k', '256k', '192k', '128k', '96k')):
+        raise ValueError('Unsupported audio format or bitrate')
+    if mode == 'audio' and afmt == 'opus' and br == '320k':
+        raise ValueError('Opus supports up to 256k for mono; choose 256k or less')
 
     # The same video at two qualities, or as MP4 and then as H.264, used to
     # land on one filename. yt-dlp saw the file already sitting there,
@@ -1333,7 +1833,10 @@ def build_cmd(data: dict, output_dir: str) -> list:
         tag = CONT_TAG.get(data.get("cont", "mp4"), "")
         vtag = "%(height& {}p|)s" + (f" {tag}" if tag else "")
     else:
-        vtag = ""
+        # Keep audio, bitrate variants and clips from silently sharing outputs.
+        vtag = " audio-" + afmt
+        if afmt not in ("original", "flac", "wav"):
+            vtag += "-" + br
     # Two sections of one video are two different files, and without the
     # range in the name they are one: the second download finds the first
     # already there, skips it, and reports success. Same for the muted cut,
@@ -1345,7 +1848,7 @@ def build_cmd(data: dict, output_dir: str) -> list:
     # file does not contain — "60-30" on a file that runs 60s to the end.
     if ce is not None and cs is not None and ce <= cs:
         ce = None
-    if mode == "video" and (cs is not None or ce is not None):
+    if cs is not None or ce is not None:
         vtag += f" {cs if cs is not None else 0}-{ce if ce is not None else 'end'}"
     if mode == "video" and data.get("mute"):
         vtag += " mute"
@@ -1370,7 +1873,8 @@ def build_cmd(data: dict, output_dir: str) -> list:
     else:
         out = os.path.join(output_dir, f"%(title).180B [%(id)s]{vtag}.%(ext)s")
 
-    cmd = [YTDLP, "--newline", "--add-metadata", "--no-mtime",
+    cmd = [YTDLP, "--ignore-config", "--no-cache-dir", "--newline",
+           "--add-metadata", "--no-embed-info-json", "--no-mtime",
            "--retries", "10", "--fragment-retries", "10",
            "--concurrent-fragments", "4", "-o", out]
 
@@ -1387,10 +1891,8 @@ def build_cmd(data: dict, output_dir: str) -> list:
     else:
         cmd.append("--no-playlist")
 
-    # Browser cookies (for sites that require a login)
-    cookies = data.get("cookies", "none")
-    if cookies and cookies != "none":
-        cmd += ["--cookies-from-browser", cookies]
+    # The same auth selection is used by the preview and download.
+    cmd += _cookie_args(data.get("cookies", "none"), cookie_path)
 
     # Save the video's thumbnail alongside the download (as jpg)
     if want_thumb:
@@ -1407,7 +1909,7 @@ def build_cmd(data: dict, output_dir: str) -> list:
     # cut snaps back to the nearest keyframe — the clip can start a few
     # seconds early. Audio clips ignore it: an audio re-encode is free and
     # a copy cut drags in up to ~10 s of extra sound (webm cluster snap).
-    clip_lossless = bool(data.get("clipLossless")) and mode == "video"
+    clip_lossless = (bool(data.get("clipLossless")) and mode == "video") or source_audio
     if is_clip_dl:
         section = "*%s-%s" % (clip_start or 0,
                               clip_end if clip_end is not None else "inf")
@@ -1468,12 +1970,18 @@ def build_cmd(data: dict, output_dir: str) -> list:
         return cmd
 
     # ── audio mode ──
-    afmt = data.get("fmt", "mp3")
-    br   = data.get("br", "192k")
-    cmd += ["-x", "--audio-format", afmt]
-    # Bitrate makes no sense for lossless formats; only apply it to lossy ones
-    if afmt not in ("flac", "wav"):
-        cmd += ["--audio-quality", "0" if br == "best" else br.upper()]
+    if source_audio:
+        # Strictly audio-only; no -x fallback that may silently transcode an
+        # unknown codec. Sites with only muxed formats can use MP3/M4A instead.
+        cmd += ["-f", "bestaudio"]
+    else:
+        cmd += ["-f", "bestaudio/best", "-x", "--audio-format", afmt]
+        if afmt not in ("flac", "wav") and not (afmt == "opus" and br == "best"):
+            cmd += ["--audio-quality", "0" if br == "best" else br.upper()]
+        if want_thumb and afmt in ("mp3", "m4a", "opus", "flac"):
+            cmd += ["--embed-thumbnail"]
+    # Original containers and WAV keep the existing JPG sidecar. Never force
+    # a container change just to embed artwork into an unsupported format.
     cmd.append(url)
     return cmd
 
@@ -1491,7 +1999,9 @@ def history_meta(data: dict) -> str:
         if is_clip:
             parts.append("clip")
         return " ".join(p for p in parts if p)
-    meta = f"{data.get('fmt','')} {data.get('br','')}".strip()
+    fmt = data.get("fmt", "")
+    bitrate = data.get("br", "") if fmt not in ("original", "flac", "wav") else ""
+    meta = f"{fmt} {bitrate}".strip()
     return meta + (" clip" if is_clip else "")
 
 
@@ -1534,6 +2044,19 @@ _RETRY_PAUSE = 2.0
 # line that said what really happened, is worse than saying nothing. Only an
 # outright refusal earns that message.
 _REFUSED_RE = re.compile(r"HTTP Error 403", re.I)
+
+
+def _auth_failure(lines):
+    text = "\n".join(lines).lower()
+    if "dpapi" in text or "decrypt" in text and "cookie" in text:
+        return "cookieDecrypt"
+    if "could not copy" in text and "cookie" in text or "database is locked" in text:
+        return "cookieLocked"
+    if "sign in to confirm your age" in text or "age-restricted" in text:
+        return "cookieAge"
+    if any(x in text for x in ("login required", "sign in to confirm", "log in to", "cookies are no longer valid")):
+        return "cookieLogin"
+    return ""
 
 
 def _final_error(lines) -> str:
@@ -1708,11 +2231,25 @@ def _fail_job(job_id: str, data: dict, output_dir: str, error_line: str):
 
 
 def run_job(job_id: str, data: dict, output_dir: str):
+    try:
+        with _session_cookies.file(data.get('_cookie')) as cookie_path:
+            _run_job(job_id, data, output_dir, cookie_path)
+    except CookieError as e:
+        _fail_job(job_id, data, output_dir, str(e))
+    except OSError:
+        _fail_job(job_id, data, output_dir, 'Could not prepare session cookies')
+    finally:
+        # Finished/canceled jobs never retain credentials in history/state.
+        with jobs_lock:
+            data.pop('_cookie', None)
+
+
+def _run_job(job_id: str, data: dict, output_dir: str, cookie_path: str = ''):
     # Everything runs inside the try: a job that raises before it is marked
     # done would sit in the list as a phantom "downloading" row forever, and
     # on Linux the watchdog would never let the app exit.
     try:
-        cmd = build_cmd(data, output_dir)
+        cmd = build_cmd(data, output_dir, cookie_path)
         clip_dur = _clip_duration_seconds(data)
         # A section download runs through ffmpeg, which stays SILENT (no percent
         # lines) for the whole transfer. Mark the job so the UI shows an
@@ -1720,7 +2257,8 @@ def run_job(job_id: str, data: dict, output_dir: str):
         is_clip = (_parse_timestamp(data.get("clipStart", "")) is not None or
                    _parse_timestamp(data.get("clipEnd", "")) is not None)
         with jobs_lock:
-            jobs[job_id]["lines"].append("$ " + " ".join(cmd))
+            jobs[job_id]["lines"].append("$ " + " ".join(
+                "[session cookies]" if cookie_path and arg == cookie_path else arg for arg in cmd))
             jobs[job_id]["started"] = True
             if is_clip:
                 jobs[job_id]["code"] = "clip"
@@ -1749,22 +2287,24 @@ def run_job(job_id: str, data: dict, output_dir: str):
             # by "Private video" spend a third attempt on a video that is
             # never coming.
             emitted = 0
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", errors="replace", bufsize=1,
-                                    env=_clean_env(),
-                                    # POSIX: own process group, else kill_process_tree's
-                                    # killpg would hit Aevum's group and take the app down
-                                    start_new_session=sys.platform != "win32",
-                                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-            with jobs_lock:
-                jobs[job_id]["proc"] = proc
-                # Stop pressed in the gap between leaving the queue and getting a
-                # process: there was nothing to kill then, so kill it now.
-                already_cancelled = jobs[job_id].get("cancelled", False)
+            with _maintenance_lock:
+                if _shutting_down.is_set():
+                    return
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                        env=_clean_env(), start_new_session=sys.platform != "win32",
+                                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+                with jobs_lock:
+                    jobs[job_id]["proc"] = proc
+                    already_cancelled = jobs[job_id].get("cancelled", False)
             if already_cancelled:
                 kill_process_tree(proc.pid)
             for line in proc.stdout:
                 line = line.rstrip()
+                if cookie_path:
+                    line = line.replace(cookie_path, "[session cookies]")
+                if re.search(r"(?i)(?:^|\s)(?:set-cookie|cookie):", line):
+                    line = "[aevum] cookie header omitted"
                 if not line:
                     continue
                 if "Downloading item" in line:
@@ -1816,7 +2356,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
                     # warning below only fires when this never happened.
                     subs_embedded = True
                 if any(x in line for x in ["[Merger]", "[VideoConvertor]", "[ExtractAudio]",
-                                              "[EmbedSubtitle]", "[Metadata]", "[FixupM"]):
+                                              "[EmbedSubtitle]", "[EmbedThumbnail]", "[Metadata]", "[FixupM"]):
                     progress, code = 94, "process"
                 elif "time=" in line and code != "process":
                     # Section/clip downloads can run through ffmpeg, which reports
@@ -1876,7 +2416,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
             with jobs_lock:
                 lines = jobs[job_id]["lines"]
                 tail = lines[-emitted:] if emitted else []
-            if not _RETRYABLE_RE.search(_final_error(tail)):
+            if _auth_failure(tail) or not _RETRYABLE_RE.search(_final_error(tail)):
                 break
             with jobs_lock:
                 jobs[job_id]["lines"].append(
@@ -1922,8 +2462,9 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 # are the same browser underneath and fail the same way. The
                 # browser came out of our own menu, so name the one that
                 # still works instead of passing the raw line through.
-                if any("DPAPI" in l for l in jobs[job_id]["lines"]):
-                    jobs[job_id]["cookieerr"] = True
+                auth = _auth_failure(jobs[job_id]["lines"])
+                jobs[job_id]["autherr"] = auth
+                jobs[job_id]["cookieerr"] = auth == "cookieDecrypt"
                 # yt-dlp says "Requested format is not available" and leaves
                 # it there. The user picked a chip, not a format string, so
                 # say it in those terms — the H.264 chip refuses rather than
@@ -1943,7 +2484,7 @@ def run_job(job_id: str, data: dict, output_dir: str):
                 # playlist is excluded for the same reason it is not
                 # retried — one refused item out of fifty is not the site
                 # turning us away, and the other forty-nine arrived.
-                if not data.get("playlist") and _REFUSED_RE.search(_final_error(
+                if not auth and not data.get("playlist") and _REFUSED_RE.search(_final_error(
                         jobs[job_id]["lines"][-emitted:] if emitted else [])):
                     jobs[job_id]["staleerr"] = True
         with jobs_lock:
@@ -1985,7 +2526,8 @@ def _default_download_dir() -> str:
 
 _probe_proc_lock = threading.Lock()
 _probe_proc = None
-_probe_cache = {}          # url -> summary dict (bounded, insertion-ordered)
+_probe_cache = {}          # (url, browser, import token) -> summary
+_probe_cache_lock = threading.Lock()
 _PROBE_CACHE_MAX = 10
 
 # UI quality buckets, ascending (a format of height H belongs to the
@@ -2014,24 +2556,27 @@ def _run_probe_json(args, timeout=25):
     gate the update itself is holding.
     """
     global _probe_proc
-    if _maintenance_busy.is_set():
-        return None
-    _kill_current_probe()
-    try:
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                text=True, encoding="utf-8", errors="replace",
-                                env=_clean_env(),
-                                # own group on POSIX so killpg can't hit Aevum
-                                start_new_session=sys.platform != "win32",
-                                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-    except OSError:
-        return None
-    with _probe_proc_lock:
-        _probe_proc = proc
+    with _maintenance_lock:
+        if _maintenance_busy.is_set() or _shutting_down.is_set():
+            return None
+        _kill_current_probe()
+        try:
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    text=True, encoding="utf-8", errors="replace", env=_clean_env(),
+                                    start_new_session=sys.platform != "win32",
+                                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+        except OSError:
+            return None
+        with _probe_proc_lock:
+            _probe_proc = proc
     try:
         out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_process_tree(proc.pid)
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
         return None
     finally:
         with _probe_proc_lock:
@@ -2111,30 +2656,213 @@ def _summarize_video_info(info, in_playlist: bool) -> dict:
     }
 
 
-def _probe_cache_put(url: str, summary: dict):
-    if len(_probe_cache) >= _PROBE_CACHE_MAX:
-        _probe_cache.pop(next(iter(_probe_cache)))
-    _probe_cache[url] = summary
+def _probe_cache_get(key):
+    with _probe_cache_lock:
+        return _probe_cache.get(key)
+
+
+def _probe_cache_put(key, summary):
+    with _probe_cache_lock:
+        if len(_probe_cache) >= _PROBE_CACHE_MAX:
+            _probe_cache.pop(next(iter(_probe_cache)))
+        _probe_cache[key] = summary
+
+
+def _auth_snapshot(data):
+    browser, token = data.get("cookies", "none"), data.get("cookieToken", "")
+    if not isinstance(browser, str) or not isinstance(token, str) or len(token) > 128:
+        raise CookieError("cookieStale")
+    return _session_cookies.snapshot(browser, token)
+
+
+@app.route("/cookies/info")
+def cookies_info():
+    return jsonify({"native": _IS_WINDOWS})
+
+
+@app.route("/cookies/upload", methods=["POST"])
+def cookies_upload():
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
+    try:
+        browser = request.args.get("browser", "")
+        if browser not in BROWSERS:
+            raise CookieError("cookieChooseBrowser")
+        raw = request.stream.read(MAX_COOKIE_BYTES + 1)
+        token = _session_cookies.load(browser, raw)
+        return jsonify({"token": token, "browser": browser})
+    except CookieError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/cookies/select", methods=["POST"])
+def cookies_select():
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
+    data = request.get_json(silent=True)
+    if (not isinstance(data, dict) or not isinstance(data.get("browser"), str)
+            or data["browser"] not in BROWSERS):
+        return jsonify({"error": "cookieChooseBrowser"}), 400
+    if not _IS_WINDOWS:
+        return jsonify({"fallback": True})
+    if not _cookie_dialog_lock.acquire(blocking=False):
+        return jsonify({"error": "cookieBusy"}), 409
+    try:
+        manual_export = data.get('exported') is True
+        if manual_export:
+            downloads = _default_download_dir()
+            initial = downloads if os.path.isdir(downloads) else None
+        else:
+            initial = browser_directory(data["browser"])
+        try:
+            selected = select_cookie_file(initial, data.get('lang', 'en'))
+        except OSError:
+            return jsonify({"fallback": True, "warning": "cookiePickerFallback"})
+        if not selected:
+            return jsonify({"cancelled": True, "warning": "" if initial or manual_export else "cookieFolderMissing"})
+        try:
+            with open(selected, "rb") as f:
+                raw = f.read(MAX_COOKIE_BYTES + 1)
+        except OSError:
+            return jsonify({"error": "cookieUnreadable"}), 400
+        token = _session_cookies.load(data["browser"], raw)
+        return jsonify({"token": token, "browser": data["browser"],
+                        "warning": "" if initial or manual_export else "cookieFolderMissing"})
+    except CookieError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        _cookie_dialog_lock.release()
+
+
+def _run_cookie_export(browser, destination, timeout=25):
+    """Export locally through yt-dlp; no video URL, network request or raw DB parsing.
+
+    An empty, synthetic playlist lets the CLI finish normally and save its jar.
+    --no-clean-info-json preserves its empty entries list. Nothing is downloaded.
+    """
+    global _cookie_export_proc
+    payload = json.dumps({'_type': 'playlist', 'id': 'aevum-cookie-export',
+                          'title': 'Cookie export', 'extractor': 'generic',
+                          'extractor_key': 'Generic', 'entries': []})
+    args = [YTDLP, '--ignore-config', '--no-cache-dir', '--no-plugin-dirs',
+            '--quiet', '--no-progress', '--cookies-from-browser', browser_cookie_source(browser),
+            '--cookies', destination, '--skip-download', '--no-clean-info-json', '--load-info-json', '-']
+    with _maintenance_lock:
+        if _shutting_down.is_set():
+            raise CookieError('appClosed')
+        if _maintenance_busy.is_set():
+            raise CookieError('cookieMaintenance')
+        if _cookie_export_proc is not None and _cookie_export_proc.poll() is not None:
+            _cookie_export_proc = None
+        if _cookie_export_proc is not None:
+            raise CookieError('cookieBusy')
+        try:
+            proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
+                                    env=_clean_env(), start_new_session=sys.platform != 'win32',
+                                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+        except OSError:
+            raise CookieError('cookieAutoFailed') from None
+        _cookie_export_proc = proc
+    try:
+        try:
+            _, diagnostic = proc.communicate(input=payload, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_process_tree(proc.pid)
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            raise CookieError('cookieAutoTimeout') from None
+        if _shutting_down.is_set():
+            raise CookieError('appClosed')
+        # Only fixed public codes leave this function, never stderr or cookie data.
+        reason = _auth_failure((diagnostic or '').splitlines())
+        if reason in ('cookieDecrypt', 'cookieLocked'):
+            raise CookieError(reason)
+        if proc.returncode:
+            text = (diagnostic or '').lower()
+            if 'could not find' in text and ('cookie' in text or 'profile' in text):
+                raise CookieError('cookieProfileMissing')
+            raise CookieError('cookieAutoFailed')
+    finally:
+        with _maintenance_lock:
+            # Keep the maintenance gate closed if OS termination failed.
+            if _cookie_export_proc is proc and proc.poll() is not None:
+                _cookie_export_proc = None
+
+
+@app.route('/cookies/auto', methods=['POST'])
+def cookies_auto():
+    if request.headers.get('X-Aevum') != '1':
+        return jsonify({'error': 'bad request'}), 403
+    data = request.get_json(silent=True)
+    if (not isinstance(data, dict) or not isinstance(data.get('browser'), str)
+            or data['browser'] not in BROWSERS):
+        return jsonify({'error': 'cookieChooseBrowser'}), 400
+    if not _cookie_dialog_lock.acquire(blocking=False):
+        return jsonify({'error': 'cookieBusy'}), 409
+    try:
+        # The same tracked, per-process temp lifecycle as manual imports.
+        with _session_cookies.file(b'# Netscape HTTP Cookie File\n') as path:
+            _run_cookie_export(data['browser'], path)
+            with open(path, 'rb') as exported:
+                raw = exported.read(MAX_COOKIE_BYTES + 1)
+            token = _session_cookies.load(data['browser'], raw)
+        return jsonify({'token': token, 'browser': data['browser'], 'automatic': True})
+    except CookieError as error:
+        code = str(error)
+        if code in ('cookieEmpty', 'cookieExpired'):
+            code = 'cookieAutoEmpty'
+        return jsonify({'error': code, 'fallback': code not in ('appClosed', 'cookieBusy')}), 409
+    except OSError:
+        return jsonify({'error': 'cookieAutoFailed', 'fallback': True}), 409
+    finally:
+        _cookie_dialog_lock.release()
+
+
+@app.route("/cookies/remove", methods=["POST"])
+def cookies_remove():
+    if request.headers.get("X-Aevum") != "1":
+        return jsonify({"error": "bad request"}), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("token"), str):
+        return jsonify({"error": "bad request"}), 400
+    _session_cookies.remove(data["token"])
+    return jsonify({"ok": True})
 
 
 @app.route("/probe", methods=["POST"])
 def probe_route():
-    data = request.json or {}
-    url = normalize_url((data.get("url") or "").strip())
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("url"), str):
+        return jsonify({"error": "empty URL"}), 400
+    url = normalize_url(data["url"].strip())
     if not url:
         return jsonify({"error": "empty URL"}), 400
+    try:
+        content = _auth_snapshot(data)
+        key = (url, data.get("cookies", "none"), data.get("cookieToken", ""))
+        cached = _probe_cache_get(key)
+        if cached:
+            return jsonify(cached)
+        with _session_cookies.file(content) as path:
+            return _probe_response(url, key, _cookie_args(data.get("cookies", "none"), path))
+    except CookieError as e:
+        return jsonify({"error": str(e)}), 400
+    except OSError:
+        return jsonify({"error": "cookieUnreadable"}), 400
 
-    cached = _probe_cache.get(url)
-    if cached:
-        return jsonify(cached)
 
+def _probe_response(url, key, auth_args):
     pid = playlist_id(url)
     is_pure_playlist = ("/playlist" in url) or (pid and "v=" not in url)
 
     if is_pure_playlist:
         # Cheap flat pass: titles only, no per-video format scan
-        info = _run_probe_json([YTDLP, "-J", "--flat-playlist", "--no-warnings",
-                                "--socket-timeout", "15", url],
+        info = _run_probe_json([YTDLP, "--ignore-config", "--no-cache-dir", "-J",
+                                "--flat-playlist", "--no-warnings",
+                                "--socket-timeout", "15", *auth_args, url],
                                timeout=20)
         if not info:
             return jsonify({"error": "probe failed"}), 502
@@ -2143,15 +2871,16 @@ def probe_route():
             "title": (info.get("title") or "")[:200],
             "count": int(info.get("playlist_count") or len(info.get("entries") or [])),
         }
-        _probe_cache_put(url, summary)
+        _probe_cache_put(key, summary)
         return jsonify(summary)
 
-    info = _run_probe_json([YTDLP, "-J", "--no-playlist", "--no-warnings",
-                            "--socket-timeout", "15", url])
+    info = _run_probe_json([YTDLP, "--ignore-config", "--no-cache-dir", "-J",
+                            "--no-playlist", "--no-warnings",
+                            "--socket-timeout", "15", *auth_args, url])
     if not info:
         return jsonify({"error": "probe failed"}), 502
     summary = _summarize_video_info(info, in_playlist=bool(pid))
-    _probe_cache_put(url, summary)
+    _probe_cache_put(key, summary)
     return jsonify(summary)
 
 
@@ -2175,27 +2904,50 @@ def _queue_worker():
                 continue
             data, output_dir = job["data"], job["output_dir"]
             job["code"] = "start"
+            job["claimed"] = True
         run_job(job_id, data, output_dir)
 
 
 @app.route("/download", methods=["POST"])
 def download_route():
-    data = request.json or {}
-    url  = data.get("url", "").strip()
+    incoming = request.get_json(silent=True)
+    if not isinstance(incoming, dict) or not isinstance(incoming.get("url"), str):
+        return jsonify({"error": "empty URL"}), 400
+    # Never accept private backend state or paths to cookie files from JSON.
+    fields = ("url", "mode", "vq", "cont", "fmt", "br", "cookies", "cookieToken",
+              "subs", "mute", "thumb", "playlist", "clipLossless", "dir", "clipStart", "clipEnd")
+    data = {k: incoming[k] for k in fields if k in incoming}
+    url = data["url"].strip()
     if not url:
         return jsonify({"error": "empty URL"}), 400
+    data["url"] = url
+    try:
+        data["_cookie"] = _auth_snapshot(data)
+        build_cmd(data, "")  # validate before creating a directory or queue entry
+    except CookieError as e:
+        return jsonify({"error": str(e)}), 400
+    except (ValueError, TypeError, AttributeError):
+        return jsonify({"error": "cookieOrOptionsInvalid"}), 400
+    if _shutting_down.is_set():
+        return jsonify({"error": "appClosed"}), 409
     # A real download outranks preview metadata — free the bandwidth
     _kill_current_probe()
-    raw_dir    = data.get("dir", "").strip()
+    if not isinstance(data.get("dir", ""), str):
+        return jsonify({"error": "downloadFolderError"}), 400
+    raw_dir = data.get("dir", "").strip()
     output_dir = str(Path(raw_dir).expanduser()) if raw_dir else _default_download_dir()
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return jsonify({"error": "downloadFolderError"}), 400
     job_id = str(uuid.uuid4())[:8]
     # The preview card has almost always probed this URL already, so the
     # title is a cache hit; without it the row just falls back to the URL.
     # Keyed the way the probe stored it. A Vimeo link is rewritten on its
     # way to yt-dlp, so the raw address the user pasted is not the one the
     # card was filed under, and looking it up unchanged loses the title.
-    cached = _probe_cache.get(normalize_url(url)) or {}
+    cached = _probe_cache_get((normalize_url(url), data.get("cookies", "none"),
+                               data.get("cookieToken", ""))) or {}
     with jobs_lock:
         # The tray app can run for weeks — drop old finished jobs so the
         # dict (and the output lines each one holds) can't grow forever
@@ -2225,6 +2977,7 @@ def jobs_route():
                    "item": j.get("item", ""), "error_line": j.get("error_line", ""),
                    "subswarn": j.get("subswarn", False),
                    "cookieerr": j.get("cookieerr", False),
+                   "autherr": j.get("autherr", ""),
                    "formaterr": j.get("formaterr", False),
                    "staleerr": j.get("staleerr", False)}
                   for jid, j in jobs.items() if not j["done"]]
@@ -2241,6 +2994,7 @@ def jobs_route():
                     "error_line": f.get("error_line", ""),
                     "subswarn": f.get("subswarn", False),
                     "cookieerr": f.get("cookieerr", False),
+                    "autherr": f.get("autherr", ""),
                     "formaterr": f.get("formaterr", False),
                     "staleerr": f.get("staleerr", False)}
     with history_lock:
@@ -2262,6 +3016,7 @@ def status_route(job_id):
                     "item": job.get("item", ""), "error_line": job.get("error_line", ""),
                     "speed": job.get("speed", ""), "subswarn": job.get("subswarn", False),
                     "cookieerr": job.get("cookieerr", False),
+                    "autherr": job.get("autherr", ""),
                     "formaterr": job.get("formaterr", False),
                     "staleerr": job.get("staleerr", False),
                     "output_dir": job["output_dir"]})
@@ -2283,7 +3038,8 @@ def cancel_route(job_id):
         proc = job.get("proc")
         # Still waiting its turn: no process to kill, so retire it here.
         # The worker skips anything already marked done.
-        if proc is None and not job["done"]:
+        if proc is None and not job["done"] and not job.get("claimed"):
+            job.get("data", {}).pop("_cookie", None)
             job.update({"done": True, "success": False, "code": "stopped",
                         "progress": 0, "speed": "", "eta": ""})
     if proc and proc.poll() is None:
@@ -2767,7 +3523,7 @@ def _do_update(rel: dict, kind: str, name: str, ver: str):
             # place: same AppId, settings and shortcuts survive.
             subprocess.Popen([final], close_fds=True, env=_clean_env())
             _set_update(stage="launched", pct=100, path=final)
-            threading.Timer(1.5, lambda: os._exit(0)).start()
+            threading.Timer(1.5, _shutdown_now).start()
             return
 
         # Portable. The version goes in the name for a plain reason: the asset
@@ -2958,11 +3714,17 @@ _maintenance_lock = threading.Lock()
 
 def _claim_maintenance() -> bool:
     """Raise the flag if nobody else holds it. False means someone does."""
+    global _cookie_export_proc
     with _maintenance_lock:
-        if _maintenance_busy.is_set():
+        if _cookie_export_proc is not None and _cookie_export_proc.poll() is not None:
+            _cookie_export_proc = None
+        if _maintenance_busy.is_set() or _shutting_down.is_set() or _cookie_export_proc is not None:
             return False
         _maintenance_busy.set()
-        return True
+    # No new probe can launch after the gate closes. Drain one already
+    # registered before a package update/revert touches its executable.
+    _kill_current_probe()
+    return True
 
 
 def _user_ytdlp() -> str:
@@ -3239,6 +4001,11 @@ def packages_revert():
         return jsonify({"stage": "error", "busy": True,
                         "msg": "an update is running"}), 409
     try:
+        with jobs_lock:
+            if any(not j["done"] for j in jobs.values()):
+                _maintenance_busy.clear()
+                return jsonify({"stage": "error", "busy": True,
+                                "msg": "a download is running"}), 409
         if os.path.isfile(_user_ytdlp()):
             os.remove(_user_ytdlp())
     except OSError as e:
@@ -3359,15 +4126,8 @@ def open_browser(icon=None, item=None):
 
 
 def quit_app(icon, item):
-    # Also stop any downloads (and a preview probe) still running
-    _kill_current_probe()
-    with jobs_lock:
-        procs = [j.get("proc") for j in jobs.values()]
-    for p in procs:
-        if p and p.poll() is None:
-            kill_process_tree(p.pid)
     icon.stop()
-    os._exit(0)
+    _shutdown_now()
 
 
 # One range, used by the two functions that have to agree about it: the one
@@ -3398,6 +4158,12 @@ def start_flask():
 
 
 def _shutdown_now():
+    # Block new subprocess launches before collecting and stopping existing ones.
+    with _maintenance_lock:
+        _shutting_down.set()
+        cookie_proc = _cookie_export_proc
+    if cookie_proc and cookie_proc.poll() is None:
+        kill_process_tree(cookie_proc.pid)
     # Kill any download processes still around (stuck ones included)
     _kill_current_probe()
     with jobs_lock:
@@ -3405,6 +4171,7 @@ def _shutdown_now():
     for p in procs:
         if p and p.poll() is None:
             kill_process_tree(p.pid)
+    _session_cookies.cleanup()
     os._exit(0)
 
 
@@ -3421,7 +4188,7 @@ def _browser_watchdog():
         time.sleep(3)
         with jobs_lock:
             active = any(not j["done"] for j in jobs.values())
-        if active:
+        if active or _cookie_dialog_lock.locked():
             continue
         now = time.time()
         with _clients_lock:
@@ -3453,6 +4220,10 @@ def _find_running_instance():
 
 def main():
     global PORT
+    # SIGTERM/console interruption use the same cleanup as Quit and the updater.
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, lambda *_: _shutdown_now())
+        signal.signal(signal.SIGINT, lambda *_: _shutdown_now())
     # Single instance: launching Aevum while it already runs used to stack a
     # second server (and tray icon) on the next port, one per launch. Reuse
     # the running one instead — just bring its page up and leave.
@@ -3528,7 +4299,7 @@ def main():
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
-        os._exit(0)
+        _shutdown_now()
 
 
 if __name__ == "__main__":

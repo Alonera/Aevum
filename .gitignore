@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 dist/
+releases/
 *.spec
 __pycache__/
 *.pyc
@@ -20,3 +21,18 @@ _preview*.html
 _preview*.png
 _ffx/
 _fftest/
+
+# Local implementation evidence; not part of the public source release.
+docs/feedback-implementation.md
+docs/release-verification.md
+docs/qa/
+
+# Linux release outputs and CI reports
+AppDir/
+Aevum-x86_64.AppImage
+Aevum-linux-x86_64.tar.gz
+appimagetool
+linux-build-manifest.json
+checksums-linux.txt
+ytdlp-checksums.txt
+release-*-tests.xml

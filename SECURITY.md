@@ -87,6 +87,54 @@ changing and it has to keep up. The same rules apply, with two differences:
 - **Back out with one click.** "back to the bundled version" deletes that file, and
   Aevum returns to the yt-dlp it shipped with.
 
+## Collected and imported cookies
+
+The cookie button first asks the bundled/selected yt-dlp executable to extract
+the chosen browser's cookies through its supported browser mechanism. It does
+not bypass OS encryption, elevate privileges or read another user's profile.
+An internal empty playlist is passed via stdin so this export makes no network
+request. External config, plugins and cache are disabled. stdout is discarded;
+stderr is only classified in memory into fixed public error codes, never sent
+to the UI or printed. Partial decryption failures also trigger manual fallback.
+
+Automatic collection can include cookies for multiple sites in the selected
+browser profile. They remain local; subsequent downloads use the cookie jar's
+normal domain/path/secure matching. Collection is serialized with file picking,
+has a 25-second timeout, excludes package/app maintenance while yt-dlp is alive,
+and is terminated on application shutdown. Successful automatic exports use
+the same validation and session store as manual files below.
+
+Manual import accepts only validated Netscape/Mozilla text cookie exports,
+limited to 2 MiB. Raw SQLite browser databases, malformed files, empty jars
+and jars containing only expired cookies are rejected without including their
+contents in error messages. It does not decrypt browser databases or bypass
+account/age/access requirements.
+
+Imports remain in backend memory. The frontend receives an opaque selection
+token and browser name, never cookie contents from the backend. Nothing is
+serialized into application settings, history, or metadata info-JSON.
+Preview and download use the same selection, but each yt-dlp subprocess gets
+a separate temporary jar because yt-dlp can write back to its cookie file.
+The private temporary directory uses the OS temp location (the current user's
+Temp on normal Windows installations), with restrictive permissions on POSIX.
+
+Temporary copies are cleaned after the subprocess finishes, on explicit Quit,
+handled termination signals, updater handoff, and normal interpreter exit.
+Session credentials stay available between downloads. Removing an import
+prevents new jobs from using it; already accepted jobs retain their snapshot.
+The user's original export is never modified or deleted.
+
+Uncatchable termination (force-kill, OS crash, power loss) cannot guarantee
+cleanup. A temporary jar may remain on disk in that case; Aevum never searches
+for or restores jars from a previous process. No claim of secure disk erasure
+is made.
+
+Cookie endpoints that collect, open a dialog, upload or remove an import require the
+existing same-origin checks plus X-Aevum. Cookie paths in command diagnostics
+are redacted, cookie header lines are suppressed, and download/probe calls
+ignore external yt-dlp configuration so it cannot enable unexpected cookie
+sources, verbose logging, or persistent caches.
+
 ## Supported versions
 
 The latest release receives fixes.

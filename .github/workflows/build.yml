@@ -11,8 +11,14 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Match the independently tested Windows binary, not a moving latest.
+      YTDLP_RELEASE: '2026.08.16.020253'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # regression compares format selection with v1.2.6
 
       - uses: actions/setup-python@v5
         with:
@@ -21,7 +27,8 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install flask pyinstaller
+          pip install flask pyinstaller pytest pillow playwright
+          python -m playwright install --with-deps chromium
 
       - name: Fetch Linux yt-dlp + static ffmpeg
         run: |
@@ -34,8 +41,13 @@ jobs:
           # reasons. What ships here is only the starting point: the in-app
           # updater watches both channels and moves to stable whenever stable
           # is the newer of the two.
-          curl -L -o bin/yt-dlp https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux
+          curl -fL -o bin/yt-dlp "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download/$YTDLP_RELEASE/yt-dlp_linux"
+          curl -fL -o ytdlp-checksums.txt "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download/$YTDLP_RELEASE/SHA2-256SUMS"
+          expected=$(awk '$2 == "yt-dlp_linux" { print $1 }' ytdlp-checksums.txt)
+          test ${#expected} -eq 64
+          echo "$expected  bin/yt-dlp" | sha256sum -c -
           chmod +x bin/yt-dlp
+          test "$(bin/yt-dlp --version)" = "$YTDLP_RELEASE"
           # Static ffmpeg, pinned to a version line by the name of the file.
           # This used to come from johnvansickle.com through a "latest
           # release" pointer; on 2026-08-16 that host reset every connection,
@@ -96,17 +108,31 @@ jobs:
           # webm. A build missing one of those fails at the moment a user
           # cuts a clip, in a place nothing here would have looked. Cheap to
           # ask now, especially with the source of these binaries changing.
-          for enc in libx264 libvpx-vp9 libopus aac; do
+          for enc in libx264 libvpx-vp9 libopus aac libmp3lame flac; do
             bin/ffmpeg -hide_banner -encoders 2>/dev/null | grep -q " $enc " \
               || { echo "REFUSING: bundled ffmpeg has no $enc encoder"; exit 1; }
           done
-          echo "encoders present: libx264, libvpx-vp9, libopus, aac"
+          echo "encoders present: libx264, libvpx-vp9, libopus, aac, libmp3lame, flac"
           bin/ffprobe -version | head -1
+
+      - name: Source, cookie, media and UI regression tests
+        run: >-
+          python -B -m pytest -q -p no:cacheprovider
+          tests/test_feedback.py tests/test_cookie_auto.py tests/test_media.py
+          tests/test_browser_ui.py tests/test_release_preparation.py
+          --junitxml=release-source-tests.xml --tb=short
 
       - name: Build AppImage + tar.gz
         run: |
           chmod +x build-linux.sh
           ./build-linux.sh
+
+      - name: Verify both Linux packages and record provenance
+        env:
+          AEVUM_LINUX_ARTIFACTS: '1'
+        run: |
+          python -B -m pytest -q -p no:cacheprovider tests/test_linux_release.py --junitxml=release-package-tests.xml --tb=short
+          python prepare-release.py linux-manifest
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -115,6 +141,10 @@ jobs:
           path: |
             Aevum-x86_64.AppImage
             Aevum-linux-x86_64.tar.gz
+            linux-build-manifest.json
+            checksums-linux.txt
+            release-source-tests.xml
+            release-package-tests.xml
 
       - name: Attach to release (on tag)
         if: startsWith(github.ref, 'refs/tags/')

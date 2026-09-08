@@ -1,53 +1,57 @@
-# Aevum 1.2.6
+# Aevum 1.2.7
 
-Downloads that failed with "403 Forbidden", and a way to fix the next one of those without waiting for a release.
-
-## Fixed
-
-- **Downloads failed with `HTTP Error 403: Forbidden`, some of the time.** Nothing was wrong with your connection or with the video. YouTube hands out an address for the file and then refuses that same address, sometimes before the first byte and sometimes a third of the way in. It is the refusal of one address, not of you: ask again and the next one usually works.
-
-  What made it show up now is that there was only one way in left. yt-dlp reaches YouTube by presenting itself as one of several apps, and for a lot of videos every one of those doors had closed except a single one — which is the one being refused at random. Measured on the version 1.2.5 shipped: four of six downloads of the same video failed, while every other door reported no formats at all or a DRM wall.
-
-  Two things changed. Aevum tries a failed download again, up to three times, because a fresh attempt asks for a fresh address; on the old yt-dlp that took the failure rate of a single attempt from 29% to none in ten downloads. And the yt-dlp in this build knows a door the last one did not, which fetches the video in pieces rather than one long stream and never meets the refusal at all: eighteen downloads, none failed.
-
-  Retrying is a safety net, not the cure. On a large file three attempts are still sometimes not enough, which is why the copy of yt-dlp matters and why the Packages line below exists.
-
-- **The error said nothing you could act on.** `HTTP Error 403: Forbidden` is a line for someone reading a server log. When a site refuses a download three times in a row, Aevum now says so and points at where to fix it. Failures that trying again cannot mend — a private video, a format the site does not have, a connection that dropped at this end — are not retried and keep their own message, so a hopeless download still fails as fast as it used to.
+The audio stream you actually have, a cover to go with it, and a clearer way to bring your own signed-in session.
 
 ## New
 
-- **Packages, in Settings.** A second line under the version, with its own button. It updates yt-dlp, which is the part of Aevum that goes out of date on its own: the sites keep changing and it keeps up, usually within days, while a release here takes weeks. Until now the copy inside the package was the only one Aevum would use, so a fix that already existed still meant waiting for a whole new download of Aevum.
+- **Cover art for audio downloads.** The existing Thumbnail option is now available in Audio mode too. MP3, M4A, Opus and FLAC can carry the cover inside the file; Original and WAV keep it as a separate JPG. The site still has to provide an image. Adding a cover alone does not re-encode the audio.
 
-  The updated copy goes into your own folder — `%APPDATA%\Aevum\bin` on Windows, `~/.config/aevum/bin` elsewhere — and Aevum prefers it over the bundled one. Nothing else is written and no installer runs. yt-dlp verifies its own download against the hash it publishes; if the result will not run, the old one is put back. "back to the bundled version" undoes the whole thing by deleting one file.
+- **Original audio.** A new format choice keeps the available audio-only stream without converting it. Its codec and quality come from the source. If a site only offers audio already joined to video, choose one of the converted formats instead. Stream-copy clips may start or end a little away from the requested boundary.
 
-  It watches both of yt-dlp's channels and offers stable whenever stable is newer than what you have, a nightly only when stable is not. So a nightly is never where you stay: the next stable that passes your copy takes you back to it.
+- **A cookie button that tries the browser first.** Select Chrome, Edge, Firefox, Brave or Zen, then press the small button at the end of the row. Aevum asks yt-dlp to read that browser's cookies and shows a check when it has collected a usable jar. This step is local: no video is downloaded and no network request is needed to collect the cookies.
 
-  A nightly is cut every day, so that line will usually have something on offer. The note under it says what the button is actually for — unless downloads keep failing, there is nothing there you need.
+  If the profile cannot be found, the database is locked, decryption fails, the jar is empty or the operation times out, the reason stays visible and a file picker opens. On Windows it starts in Downloads when available. If the web browser blocks an asynchronous picker, a small “Select cookies.txt” button remains available.
 
-- **One button per line, and it tells you what it is doing.** Both update lines now carry a small round control that is four things in turn: circling arrows while it looks, a download arrow when it has found something, a ring that fills while it works, and a tick when it is done. A scan that finds nothing ends on the tick too. What it is showing is what pressing it does.
+- **Manual cookies.txt import.** The fallback accepts an exported Netscape-format cookie file, not Chrome's raw Cookies database or Firefox/Zen's cookies.sqlite. The helper under the row explains the difference for the selected browser. A check confirms the file was read; it does not promise that the account can access every video.
 
-- **A build that cannot install its own update now opens the release page** instead of telling you to go and find it.
+- **Zen, next to Brave.** It uses yt-dlp's Firefox reader with Zen's own profile directory. It does not silently borrow the session from Firefox.
+
+## Fixed
+
+- **A preview could disagree with the download about login.** The preview did not receive the browser-cookie selection. Both paths now use the same authentication state, and cached previews are separated by browser and imported session.
+
+- **An old reply could overwrite a new selection.** Changing browser or URL invalidates pending results. Removing imported cookies returns new requests to normal browser extraction; downloads already accepted into the queue retain their own snapshot.
+
+- **Cookie failures looked like generic download errors.** Login, age verification, locked databases and decryption failures now have distinct messages. Retrying is not used to conceal an authentication failure.
+
+- **Cancellation could release the update gate too soon.** An accepted job remains protected while its process is being started. Previews and cookie extraction are coordinated with maintenance, so an updater cannot replace yt-dlp underneath them.
+
+- **Failed requests could clear the pasted link.** The URL now remains available to correct the options and try again.
+
+- **Different audio requests could collide on one filename.** Audio format, bitrate and clip range distinguish the output names.
+
+- **The highest Opus bitrate failed for mono sources.** The upper option is now 256k instead of 320k; Auto leaves the encoder's default in charge.
 
 ## Changed
 
-- **The bundled yt-dlp comes from the nightly channel.** Not a taste for the bleeding edge, a look at the calendar: stable releases have come 25 to 84 days apart, and on the day this was built the newest stable was six weeks old and could not download from YouTube at all. Nightly builds come from the same tree and the same tests, a day behind the fix instead of weeks. From there the in-app updater moves you to stable whenever stable is ahead.
+- **Bitrate labels say what they can promise.** MP3 still offers 320k, but it is an encoding target, not evidence that the source contained that much detail. VBR best and Auto replace the misleading source-quality label where appropriate. Converting to FLAC or WAV cannot restore information missing from a lossy source.
 
-- **Both version lines are filled in before anything is asked of the network.** What you have installed is answerable without leaving the machine, so the panel shows it the moment it opens. The network is only needed for whether something newer exists, which is the question the button asks.
+- **All new messages are available in eight languages**, including cookie status, error details and audio hints. The Windows file dialog and installer are localized too. The existing compact layout and subdued helper text are preserved.
 
-- **The guide has two more entries**, one for each update line, in all eight languages.
+- **Aevum's selected options take precedence over external yt-dlp configuration.** Download and preview calls ignore external config and persistent cache settings. Authentication-bearing info JSON is not embedded in downloaded files.
 
-## Privacy
+## Privacy and limits
 
-Opening Settings now makes three HTTPS requests to `api.github.com`: this repository's newest release, yt-dlp's newest stable, and yt-dlp's newest nightly. They happen only when you open that panel, never at launch, and the answers are reused for fifteen minutes. Nothing about you or about what you have downloaded goes with them. SECURITY.md spells out what the hash check does and does not prove, and why a nightly is a trade worth making rather than a free lunch.
+Collected and imported cookies stay available for the current backend session, including between downloads. They are not saved into settings or download history and are not returned to the page. Each child process receives its own temporary copy because yt-dlp may write back to its jar; that copy is removed after the operation.
+
+Quitting Aevum clears the session and attempts to remove remaining temporary copies. On Windows, closing only the browser tab leaves the tray application running. A force-kill or power loss cannot guarantee cleanup, but a later launch never restores the previous session's cookies. Your original exported file is not changed or deleted.
+
+Automatic collection may read cookies for multiple sites in the selected browser profile. Keep manual exports private and export only what you need. Chromium's Windows encryption is not bypassed: if it prevents automatic reading, use your own exported cookies.txt. Account permissions and age-verification requirements still apply.
 
 ## Under the hood
 
-- ffmpeg is deliberately **not** part of the self-updating. It is pinned at 8.0 because 8.1.x hangs forever on googlevideo and takes clip downloads with it. It does not argue with the sites, so it does not go stale.
+- The Windows and Linux builds use the same pinned yt-dlp release, 2026.08.16.020253. FFmpeg remains on the previously supported lines: Windows 8.0 and Linux 7.1, with the required encoders checked.
+- Regression coverage includes synthetic authenticated downloads, Firefox/Zen cookie databases, audio covers and packet-preserving muxing, queue/cancellation, maintenance, session cleanup and all eight UI languages.
+- Release checksums keep the filename-first format understood by existing Aevum updaters. Windows and Linux assets are assembled only when their source commit and source hashes agree.
 
-- **Two copies of Aevum could run at once.** The port it listens on was picked from a range of sixty, while the check for an already-running copy only looked at the first ten — so a copy that landed on 5012 was invisible to the next launch. One range now.
-
-- Requests that cost something — a process, a call to GitHub — need a header only Aevum's own page sends. That closes a gap where any page open in your browser could have made Aevum spawn yt-dlp, and it applies to the update check that has been there since 1.2.5.
-
-- An update and a download can no longer overlap. Installing or swapping a binary while a download is running would hurt the download; the queue waits the few seconds instead, and the two updaters cannot run at the same time as each other either.
-
-- A yt-dlp reached through a symlinked or redirected folder refused to start with a message about "parent process has different executable". Paths are resolved to their real location now.
+Windows builds are unsigned; Windows may show a SmartScreen warning.
