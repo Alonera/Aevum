@@ -55,7 +55,13 @@ def test_linux_frozen_auth_queue_and_shutdown(tmp_path, media, kind):
         connection.close()
     env = dict(os.environ, XDG_CONFIG_HOME=str(config), TMPDIR=str(tmp_path),
                BROWSER='/bin/true', APPIMAGE_EXTRACT_AND_RUN='1')
-    binary = ROOT / ('dist/Aevum/Aevum' if kind == 'tarball' else 'Aevum-x86_64.AppImage')
+    if kind == 'tarball':
+        installed = tmp_path / 'installed'
+        with tarfile.open(ROOT / 'Aevum-linux-x86_64.tar.gz') as archive:
+            archive.extractall(installed, filter='data')
+        binary = installed / 'Aevum/Aevum'
+    else:
+        binary = ROOT / 'Aevum-x86_64.AppImage'
     process = subprocess.Popen([str(binary), '--tray'], env=env, start_new_session=True,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = 'http://127.0.0.1:5000'

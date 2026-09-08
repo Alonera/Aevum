@@ -59,9 +59,12 @@ jobs:
           # this app has been tested against; 8.1.x, which hangs forever on
           # googlevideo range requests (yt-dlp #16546), can never arrive
           # under this name.
-          FF=ffmpeg-n7.1-latest-linux64-gpl-7.1
+          # The moving latest release no longer carries 7.1. Use a retained
+          # monthly build and verify its published asset digest before unpacking.
+          FF=ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1
           curl -fL -o ffmpeg.tar.xz \
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FF.tar.xz"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/$FF.tar.xz"
+          echo 'c1e6caf48923dd8e6bc5e54d51ba70c321175b8162ae9c414c392990e72f0e79  ffmpeg.tar.xz' | sha256sum -c -
           mkdir -p fftmp && tar -xf ffmpeg.tar.xz -C fftmp
           # Found rather than assumed: the two sources lay their archives out
           # differently, and a hard-coded path is how a swap like this breaks
