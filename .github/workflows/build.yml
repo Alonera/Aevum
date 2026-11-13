@@ -165,7 +165,7 @@ jobs:
           # moves into a container (issue #19), the ceiling stays unless the
           # container base changes too. A refusal here is a build to look
           # at, not a number to bump.
-          CEILING=2.30  # DELIBERATE: proving the guard can fail; revert before release
+          CEILING=2.35
           worst=0; worst_file=''; bad=0
           while IFS= read -r -d '' f; do
             # ELF only: the tree also holds fonts, a PNG and Python sources.

@@ -89,13 +89,27 @@ therefore removed in 1.2.8 (the v1.2.7 tag run had to be cancelled for exactly
 that reason). Publish in this order:
 
 1. Assemble the candidate and review it as above.
-2. Create the GitHub release from the reviewed commit with all four assets,
-   checksums.txt and the final notes in one step, for example
-   `gh release create v1.2.8 --target <commit> --notes-file <RELEASE-NOTES.md> <the five files>`.
-   That creates the tag; the tag push then runs the Linux workflow once more,
-   which only proves the tagged commit builds and uploads an artifact.
+2. Create the release as a **draft** with everything in one command, so no
+   partial "latest" ever exists (gh uploads assets after creating the
+   release, and a non-draft release is public during those seconds):
+
+   ```powershell
+   gh release create v1.2.8 --draft --target <commit> --title "Aevum 1.2.8" --notes-file <RELEASE-NOTES.md> Aevum.exe Aevum-Setup.exe Aevum-x86_64.AppImage Aevum-linux-x86_64.tar.gz checksums.txt
+   gh release view v1.2.8 --json assets,isDraft   # five assets, isDraft true
+   gh release edit v1.2.8 --draft=false --latest
+   ```
+
+   Publishing the draft creates the tag; the tag push then runs the Linux
+   workflow once more, which only proves the tagged commit builds and uploads
+   an artifact. Nothing is attached by CI.
 3. Confirm old-version update discovery selects the expected asset for each
-   platform after publication.
+   platform after publication: the release JSON must list `Aevum.exe`,
+   `Aevum-Setup.exe`, `Aevum-x86_64.AppImage`, `Aevum-linux-x86_64.tar.gz`
+   and `checksums.txt`, and `checksums.txt` must resolve each name with the
+   old reader (`_published_sha`).
+4. Afterwards: comment `/retest` on the AppImage catalog PR if one is open,
+   and open the winget update with `wingetcreate update Alonera.Aevum`
+   ourselves rather than waiting for the third-party bot.
 
 Do not create a latest release until all four packages, checksums and final
 notes are in place.
@@ -131,6 +145,17 @@ Why things are the way they are, so the next release does not re-derive them.
   bundled yt-dlp and ffmpeg are run there too. It replays the catalog's
   complaint before publishing. It narrows one failure class and is not a run
   on real hardware; the release notes keep saying so.
+  **This step is the only glibc coverage for yt-dlp.** Its onefile build keeps
+  libpython and its stdlib compressed inside the executable, so objdump sees
+  only the bootloader and the glibc guard cannot judge it; running
+  `yt-dlp --version` on Debian 12 is what proves it loads. Do not remove the
+  step for being slow. The probe follows the app across ports 5000-5009,
+  which is PORT_SPAN in ytdl_tray.py (ten ports for both the free-port pick
+  and the running-instance search since 1.2.6); if that constant changes, the
+  probe must change with it.
+- **The guard was proven able to fail.** Before 1.2.8 the ceiling was set to
+  2.30 for one run on purpose; the build went red on the GLIBC_2.35 symbols,
+  then the ceiling was put back. A guard that has only ever passed is untested.
 - **Windows is built with CPython 3.12.** Same minor as the Linux job. Using
   the machine's newest Python (3.14 at the time) would mean two platforms built
   from the same commit with different interpreters, which nobody had tested.
