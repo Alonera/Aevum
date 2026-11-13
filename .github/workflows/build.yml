@@ -197,15 +197,31 @@ jobs:
           # /dev/tcp; there is no FUSE in a container, hence
           # --appimage-extract-and-run. This narrows one class of failure.
           # It is not a run on real hardware, and the release notes say so.
+          #
+          # The probe asks every port Aevum may use, not just 5000. The app
+          # picks its port with a plain bind test, and the probe's own
+          # connections leave TIME_WAIT entries on the previous package's
+          # port for a minute after it exits, so the second package lands on
+          # 5001 by design (the first run of this step proved exactly that).
+          # Following the app across its port span is the honest check;
+          # pinning 5000 would test the probe, not the package.
           docker run --rm -i -v "$PWD":/x:ro -w /x debian:12 bash -s <<'EOF'
           set -eu
           . /etc/os-release
           echo "$PRETTY_NAME, $(ldd --version | head -1)"
-          export HOME=/root XDG_CONFIG_HOME=/tmp/aevum-cfg BROWSER=/bin/true APPIMAGE_EXTRACT_AND_RUN=1
-          mkdir -p "$XDG_CONFIG_HOME"
-          ping() { timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/5000 && printf "GET /ping HTTP/1.0\r\nHost: 127.0.0.1:5000\r\n\r\n" >&3 && cat <&3' 2>/dev/null || true; }
+          export HOME=/root BROWSER=/bin/true APPIMAGE_EXTRACT_AND_RUN=1 PYTHONUNBUFFERED=1
+          ping() {
+            # PORT_BASE 5000, PORT_SPAN 10 in ytdl_tray.py.
+            for port in $(seq 5000 5009); do
+              body=$(timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/'"$port"' && printf "GET /ping HTTP/1.0\r\nHost: 127.0.0.1:'"$port"'\r\n\r\n" >&3 && cat <&3' 2>/dev/null || true)
+              case "$body" in *aevum*) echo "$port"; return 0 ;; esac
+            done
+            return 1
+          }
           start_check_stop() {
             label=$1; shift
+            # A config dir per package: the first must not leave state for the second.
+            export XDG_CONFIG_HOME="/tmp/aevum-cfg-$label"; mkdir -p "$XDG_CONFIG_HOME"
             # setsid: own process group, so the AppImage runtime and the
             # backend it starts are stopped together, as the package test does.
             setsid "$@" >"/tmp/$label.log" 2>&1 &
@@ -214,9 +230,7 @@ jobs:
               if ! kill -0 "$pid" 2>/dev/null; then
                 echo "FAIL: $label exited before serving"; cat "/tmp/$label.log"; exit 1
               fi
-              case "$(ping)" in
-                *aevum*) echo "OK: $label answers /ping after ${i}s"; break ;;
-              esac
+              if port=$(ping); then echo "OK: $label answers /ping on port $port after ${i}s"; break; fi
               if [ "$i" = 60 ]; then echo "FAIL: $label did not serve within 60s"; cat "/tmp/$label.log"; exit 1; fi
               sleep 1
             done
