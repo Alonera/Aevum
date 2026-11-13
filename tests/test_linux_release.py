@@ -80,7 +80,7 @@ def test_linux_frozen_auth_queue_and_shutdown(tmp_path, media, kind):
                 time.sleep(.1)
         else:
             pytest.fail('Package server did not start')
-        assert api('/settings')['version'] == '1.2.7'
+        assert api('/settings')['version'] == '1.2.8'
         _, url = media
         def download(index, token=''):
             return api('/download', {'url': url + ('/private' if token else '') + '/audio.m4a',

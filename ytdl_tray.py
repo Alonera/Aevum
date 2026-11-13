@@ -75,7 +75,7 @@ atexit.register(lambda: _session_cookies.cleanup())
 # carry it too — build.bat refuses to build when the three disagree, because
 # the updater compares this string against the newest release tag and a stale
 # constant would either hide a real update or offer one that is already here.
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 UPDATE_REPO = "Alonera/Aevum"
 
 # ── Page liveness tracking (on Linux the app lives with the browser tab) ─────

@@ -3,14 +3,31 @@ name: Build Linux
 on:
   workflow_dispatch:        # manual "Run workflow" button
   push:
-    tags: ['v*']            # also build + attach to a release on version tags
+    tags: ['v*']            # a tag builds too, so the tagged commit is proven
+                            # to build; nothing is attached (docs/releasing.md)
 
 permissions:
-  contents: write           # let the workflow create/update releases
+  contents: read            # nothing here writes to the repository or releases
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    # Pinned, and deliberately not ubuntu-latest. A PyInstaller build takes
+    # the glibc of the machine it was built on as its floor: 1.2.7 was built
+    # on ubuntu-latest, which had quietly become 24.04 (glibc 2.39), and the
+    # result would not start on Ubuntu 22.04 (2.35), Mint 21 (2.35) or
+    # Debian 12 (2.36). The AppImage catalog's test caught it
+    # (appimage.github.io#6623): "GLIBC_2.38 not found", app gone within
+    # eleven seconds. 22.04 is the oldest Ubuntu GitHub still offers, so it
+    # is the lowest floor available here; the glibc guard after the build
+    # measures what actually came out, so a drift like that fails the build
+    # instead of the user's launch.
+    # ubuntu-latest is not a fallback: it is moving on to 26.04, so its
+    # floor only rises. This label is itself on its way out — deprecated
+    # since 2026-09-17, brownouts (jobs deliberately failed) in March and
+    # April 2027, retired 2027-04-17 (actions/runner-images#14254). The plan
+    # for that is issue #19: build inside an ubuntu:22.04 container and
+    # keep every test step, playwright included, on the host runner.
+    runs-on: ubuntu-22.04
     timeout-minutes: 25
     env:
       # Match the independently tested Windows binary, not a moving latest.
@@ -130,6 +147,92 @@ jobs:
           chmod +x build-linux.sh
           ./build-linux.sh
 
+      - name: Refuse binaries that need a glibc newer than 2.35
+        run: |
+          # The companion of the ffmpeg allowlist above, for the C library.
+          # Every ELF file in the build — libpython, the stdlib modules,
+          # ffmpeg, ffprobe, the yt-dlp bootloader — names the glibc symbol
+          # versions it needs, and the newest of those is the oldest system
+          # the package can start on. 1.2.7 shipped needing GLIBC_2.38 and
+          # nobody noticed until the AppImage catalog tried it. The runner
+          # pin above is what keeps this at 2.35; this step is what notices
+          # when the pin stops doing that — an image rebuilt on a newer
+          # base, a tool fetched from a host that moved on, a label that
+          # quietly changed meaning. 2.35 is Ubuntu 22.04 and Mint 21;
+          # Debian 12 has 2.36, Ubuntu 24.04 has 2.39. Raise the ceiling
+          # only when the floor is raised on purpose. When ubuntu-22.04
+          # retires on 2027-04-17 (brownouts from March 2027) and the build
+          # moves into a container (issue #19), the ceiling stays unless the
+          # container base changes too. A refusal here is a build to look
+          # at, not a number to bump.
+          CEILING=2.35
+          worst=0; worst_file=''; bad=0
+          while IFS= read -r -d '' f; do
+            # ELF only: the tree also holds fonts, a PNG and Python sources.
+            file -b "$f" | grep -q '^ELF' || continue
+            need=$(objdump -T "$f" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+            [ -n "$need" ] || continue
+            if [ "$(printf '%s\n%s\n' "$need" "$worst" | sort -V | tail -1)" != "$worst" ]; then
+              worst=$need; worst_file=$f
+            fi
+            if [ "$(printf '%s\n%s\n' "$need" "$CEILING" | sort -V | tail -1)" != "$CEILING" ]; then
+              echo "TOO NEW: $f needs GLIBC_$need"; bad=1
+            fi
+          done < <(find dist/Aevum -type f -print0)
+          echo "highest glibc symbol version required: GLIBC_$worst ($worst_file); ceiling GLIBC_$CEILING"
+          [ "$bad" = 0 ] || { echo "REFUSING: this package would not start on glibc $CEILING systems"; exit 1; }
+
+      - name: Start both packages on Debian 12 (glibc 2.36)
+        run: |
+          # The guard above reads what the binaries ask for; this starts
+          # them on a system that only has glibc 2.36 and checks that the
+          # local server answers. It is the catalog's complaint, replayed on
+          # purpose before anything is published. Both packages are launched
+          # the way the package tests launch them: --tray so no browser tab
+          # is opened, BROWSER=/bin/true for the one webbrowser call, a
+          # private XDG_CONFIG_HOME. The bundled yt-dlp and ffmpeg are asked
+          # their versions too, because yt-dlp's onefile build hides its own
+          # libpython from objdump and only loading it tells. debian:12
+          # ships neither curl nor python, so /ping goes through bash's
+          # /dev/tcp; there is no FUSE in a container, hence
+          # --appimage-extract-and-run. This narrows one class of failure.
+          # It is not a run on real hardware, and the release notes say so.
+          docker run --rm -i -v "$PWD":/x:ro -w /x debian:12 bash -s <<'EOF'
+          set -eu
+          . /etc/os-release
+          echo "$PRETTY_NAME, $(ldd --version | head -1)"
+          export HOME=/root XDG_CONFIG_HOME=/tmp/aevum-cfg BROWSER=/bin/true APPIMAGE_EXTRACT_AND_RUN=1
+          mkdir -p "$XDG_CONFIG_HOME"
+          ping() { timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/5000 && printf "GET /ping HTTP/1.0\r\nHost: 127.0.0.1:5000\r\n\r\n" >&3 && cat <&3' 2>/dev/null || true; }
+          start_check_stop() {
+            label=$1; shift
+            # setsid: own process group, so the AppImage runtime and the
+            # backend it starts are stopped together, as the package test does.
+            setsid "$@" >"/tmp/$label.log" 2>&1 &
+            pid=$!
+            for i in $(seq 1 60); do
+              if ! kill -0 "$pid" 2>/dev/null; then
+                echo "FAIL: $label exited before serving"; cat "/tmp/$label.log"; exit 1
+              fi
+              case "$(ping)" in
+                *aevum*) echo "OK: $label answers /ping after ${i}s"; break ;;
+              esac
+              if [ "$i" = 60 ]; then echo "FAIL: $label did not serve within 60s"; cat "/tmp/$label.log"; exit 1; fi
+              sleep 1
+            done
+            kill -TERM -- "-$pid"
+            for i in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+            if kill -0 "$pid" 2>/dev/null; then echo "WARN: $label ignored SIGTERM, killing"; kill -KILL -- "-$pid"; fi
+            wait "$pid" || true
+            echo "--- $label log ---"; cat "/tmp/$label.log"
+          }
+          mkdir -p /tmp/tgz && tar -xzf Aevum-linux-x86_64.tar.gz -C /tmp/tgz
+          echo "bundled yt-dlp: $("$(find /tmp/tgz -type f -name yt-dlp)" --version)"
+          echo "bundled ffmpeg: $("$(find /tmp/tgz -type f -name ffmpeg)" -version | head -1)"
+          start_check_stop tarball /tmp/tgz/Aevum/Aevum --tray
+          start_check_stop appimage ./Aevum-x86_64.AppImage --tray
+          EOF
+
       - name: Verify both Linux packages and record provenance
         env:
           AEVUM_LINUX_ARTIFACTS: '1'
@@ -148,11 +251,3 @@ jobs:
             checksums-linux.txt
             release-source-tests.xml
             release-package-tests.xml
-
-      - name: Attach to release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            Aevum-x86_64.AppImage
-            Aevum-linux-x86_64.tar.gz

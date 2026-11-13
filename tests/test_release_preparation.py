@@ -35,9 +35,9 @@ def test_invalid_checksum_names_hashes_and_duplicates(records):
 @pytest.fixture
 def candidates(tmp_path, monkeypatch):
     monkeypatch.setattr(prep, 'ROOT', tmp_path)
-    source = {'version': '1.2.7', 'commit': 'test-commit', 'files': {'ytdl_tray.py': 'a' * 64}}
+    source = {'version': '1.2.8', 'commit': 'test-commit', 'files': {'ytdl_tray.py': 'a' * 64}}
     monkeypatch.setattr(prep, 'provenance', lambda: source)
-    (tmp_path / 'release-notes.md').write_text('# Aevum 1.2.7\n', encoding='utf-8')
+    (tmp_path / 'release-notes.md').write_text('# Aevum 1.2.8\n', encoding='utf-8')
     win, linux = tmp_path / 'windows', tmp_path / 'linux'
     for directory, names, manifest in ((win, prep.WINDOWS, 'build-manifest.json'),
                                        (linux, prep.LINUX, 'linux-build-manifest.json')):

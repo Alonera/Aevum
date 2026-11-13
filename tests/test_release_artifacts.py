@@ -24,7 +24,7 @@ def sha(data):
 def test_release_hashes_and_source_archive():
     release = Path(RELEASE)
     manifest = json.loads((release / 'build-manifest.json').read_text(encoding='utf-8-sig'))
-    assert manifest['version'] == '1.2.7'
+    assert manifest['version'] == '1.2.8'
     for entry in manifest['artifacts']:
         path = release / entry['file']
         assert path.stat().st_size == entry['bytes']
@@ -40,7 +40,7 @@ def test_release_hashes_and_source_archive():
             assert app._published_sha({'assets': [{'name': 'checksums.txt', 'browser_download_url': 'https://example.test/checksums.txt'}]}, name) == entry['sha256']
     for entry in manifest['inputs']:
         assert sha((ROOT / entry['file']).read_bytes()) == entry['sha256']
-    with zipfile.ZipFile(release / 'Aevum-1.2.7-source.zip') as source:
+    with zipfile.ZipFile(release / 'Aevum-1.2.8-source.zip') as source:
         assert sha(source.read('aevum_cookies.py')) == sha((ROOT / 'aevum_cookies.py').read_bytes())
         assert sha(source.read('ytdl_tray.py')) == sha((ROOT / 'ytdl_tray.py').read_bytes())
         assert not any(n.lower().endswith(('cookies.txt', '.sqlite', '.exe')) for n in source.namelist())
